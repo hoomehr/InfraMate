@@ -7,9 +7,10 @@ import numpy as np
 import tiktoken
 from pathlib import Path
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import FAISS
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings as NewHuggingFaceEmbeddings
+from typing import List, Dict, Any
 
 class RAGManager:
     """
@@ -17,12 +18,9 @@ class RAGManager:
     for Terraform infrastructure templates
     """
     
-    def __init__(self, embeddings_type="local"):
+    def __init__(self):
         """
         Initialize the RAG manager
-        
-        Args:
-            embeddings_type (str): Type of embeddings to use ("local" or "openai")
         """
         self.templates_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "terraform")
         self.text_splitter = RecursiveCharacterTextSplitter(
@@ -32,18 +30,9 @@ class RAGManager:
         )
         
         # Initialize embeddings
-        if embeddings_type == "openai":
-            # Check if OPENAI_API_KEY is set
-            if os.getenv("OPENAI_API_KEY"):
-                self.embeddings = OpenAIEmbeddings()
-            else:
-                print("OPENAI_API_KEY not found, falling back to local embeddings")
-                self.embeddings = self._initialize_local_embeddings()
-        else:
-            self.embeddings = self._initialize_local_embeddings()
-        
-        # Load the vector database if it exists, otherwise create it
-        self.vector_db = self._load_or_create_vectordb()
+        self.embeddings = self._initialize_local_embeddings()
+        self.vector_store = None
+        self.templates = {}
     
     def _initialize_local_embeddings(self):
         """
@@ -52,11 +41,20 @@ class RAGManager:
         Returns:
             HuggingFaceEmbeddings: Initialized embeddings
         """
-        return HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
-            model_kwargs={'device': 'cpu'},
-            encode_kwargs={'normalize_embeddings': True}
-        )
+        try:
+            # Try the new HuggingFace embeddings first
+            return NewHuggingFaceEmbeddings(
+                model_name="sentence-transformers/all-MiniLM-L6-v2",
+                model_kwargs={"device": "cpu"},
+                encode_kwargs={"normalize_embeddings": True}
+            )
+        except ImportError:
+            # Fallback to the community version
+            return HuggingFaceEmbeddings(
+                model_name="sentence-transformers/all-MiniLM-L6-v2",
+                model_kwargs={"device": "cpu"},
+                encode_kwargs={"normalize_embeddings": True}
+            )
     
     def _load_terraform_templates(self):
         """
@@ -125,27 +123,39 @@ class RAGManager:
         
         return vector_db
     
-    def retrieve_similar_templates(self, query, n_results=3):
+    def retrieve_similar_templates(self, query: str, k: int = 3) -> List[Dict[str, Any]]:
         """
         Retrieve similar templates based on the query
         
         Args:
             query (str): Query to search for
-            n_results (int): Number of results to return
+            k (int): Number of results to return
             
         Returns:
-            list: List of similar templates with metadata
+            list: List of similar templates with metadata and score
         """
-        results = self.vector_db.similarity_search(query, k=n_results)
+        if not self.vector_store:
+            # Create vector store from templates
+            texts = list(self.templates.values())
+            metadatas = [{"name": name} for name in self.templates.keys()]
+            self.vector_store = FAISS.from_texts(
+                texts=texts,
+                embedding=self.embeddings,
+                metadatas=metadatas
+            )
+        
+        # Search for similar templates
+        docs = self.vector_store.similarity_search_with_score(query, k=k)
         return [
             {
-                'content': doc.page_content,
-                'metadata': doc.metadata
+                "content": doc[0].page_content,
+                "metadata": doc[0].metadata,
+                "score": doc[1]
             }
-            for doc in results
+            for doc in docs
         ]
     
-    def get_template_by_name(self, name):
+    def get_template_by_name(self, name: str) -> str:
         """
         Get a template by name
         
@@ -155,8 +165,19 @@ class RAGManager:
         Returns:
             str: Template content or None if not found
         """
-        template_path = os.path.join(self.templates_dir, f"{name}.tf")
-        if os.path.exists(template_path):
-            with open(template_path, 'r') as file:
-                return file.read()
-        return None 
+        return self.templates.get(name, "")
+    
+    def load_templates(self, template_dir: str):
+        """
+        Load Terraform templates from directory
+        
+        Args:
+            template_dir (str): Directory containing Terraform templates
+        """
+        template_path = Path(template_dir)
+        if not template_path.exists():
+            return
+        
+        for template_file in template_path.glob("*.tf"):
+            with open(template_file, "r") as f:
+                self.templates[template_file.stem] = f.read() 

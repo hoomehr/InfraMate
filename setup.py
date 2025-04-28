@@ -24,8 +24,10 @@ setup(
         "click>=8.1.7",
         "tiktoken>=0.5.2",
         "flask>=3.1.0",
-        "langchain>=0.0.292",
+        "langchain>=0.1.0",
         "langchain-community>=0.0.16",
+        "langchain-huggingface>=0.0.2",
+        "sentence-transformers>=2.2.2",
         "faiss-cpu>=1.7.4",
         "colorama>=0.4.6"
     ],
