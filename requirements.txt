@@ -1,0 +1,12 @@
+boto3==1.28.41
+click==8.1.7
+pyyaml==6.0.1
+openai==1.3.5
+python-dotenv==1.0.0
+gitpython==3.1.37
+langchain==0.0.292
+langchain-community==0.0.16
+google-generativeai==0.3.2
+faiss-cpu==1.7.4
+colorama==0.4.6
+tiktoken==0.5.2 
