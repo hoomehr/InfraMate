@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ github.event.inputs.target_repo }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.REPO_PAT }}
           path: target_repo
 
       - name: Set up Python
@@ -75,10 +75,16 @@ jobs:
           cd target_repo
           python -m inframate.flow .
 
+      - name: Configure Git
+        run: |
+          cd target_repo
+          git config --local user.name "GitHub Action"
+          git config --local user.email "action@github.com"
+
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v5
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.REPO_PAT }}
           path: target_repo
           commit-message: "Inframate: Generated Terraform files"
           title: "Inframate: Infrastructure Recommendations and Terraform Files"
