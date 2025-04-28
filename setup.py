@@ -3,9 +3,6 @@ from setuptools import setup, find_packages
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
-with open("requirements.txt", "r", encoding="utf-8") as fh:
-    requirements = fh.read().splitlines()
-
 setup(
     name="inframate",
     version="0.1.0",
@@ -22,7 +19,15 @@ setup(
         "boto3>=1.28.41",
         "pyyaml>=6.0.1",
         "python-dotenv>=1.0.0",
-        "google-generativeai>=0.3.2"
+        "google-generativeai>=0.3.2",
+        "gitpython>=3.1.37",
+        "click>=8.1.7",
+        "tiktoken>=0.5.2",
+        "flask>=3.1.0",
+        "langchain>=0.0.292",
+        "langchain-community>=0.0.16",
+        "faiss-cpu>=1.7.4",
+        "colorama>=0.4.6"
     ],
     classifiers=[
         "Programming Language :: Python :: 3",

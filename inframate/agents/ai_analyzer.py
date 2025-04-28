@@ -7,6 +7,8 @@ import yaml
 import google.generativeai as genai
 from dotenv import load_dotenv
 from inframate.utils.rag import RAGManager
+import requests
+from pathlib import Path
 
 # Load environment variables
 load_dotenv()
@@ -17,83 +19,42 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 # Initialize RAG manager
 rag_manager = RAGManager()
 
-def analyze_with_ai(repo_path, data):
+def analyze_with_ai(repo_info):
+    """Analyze repository information using AI"""
+    api_key = os.getenv('GEMINI_API_KEY')
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY not set in environment")
+    
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+    headers = {'Content-Type': 'application/json'}
+    
+    prompt = f"""
+    Analyze the following repository information and generate infrastructure recommendations:
+    
+    Repository: {repo_info['name']}
+    Branch: {repo_info['branch']}
+    Languages: {', '.join(repo_info['languages'])}
+    
+    Requirements:
+    {repo_info['requirements']}
+    
+    Please provide:
+    1. Recommended AWS services
+    2. Infrastructure architecture
+    3. Terraform configuration
     """
-    Use AI to analyze repository and generate infrastructure recommendations
     
-    Args:
-        repo_path (str): Path to the repository
-        data (dict): Data from previous analysis steps
-        
-    Returns:
-        dict: AI analysis results with Terraform template
-    """
-    if not GOOGLE_API_KEY:
-        return fallback_analyze(repo_path, data)
+    data = {
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }]
+    }
     
-    try:
-        # Configure the Gemini API
-        genai.configure(api_key=GOOGLE_API_KEY)
-        
-        # Get Gemini model
-        model = genai.GenerativeModel("gemini-1.5-pro")
-        
-        # Prepare the prompt with repository information
-        prompt = create_analysis_prompt(repo_path, data)
-        
-        # Generate response
-        response = model.generate_content(prompt)
-        
-        # Extract the analysis from the response
-        analysis_text = response.text
-        
-        # Try to parse the JSON from the response
-        try:
-            # Extract JSON if it's wrapped in ```json ... ``` format
-            if "```json" in analysis_text and "```" in analysis_text:
-                json_str = analysis_text.split("```json")[1].split("```")[0].strip()
-                analysis = json.loads(json_str)
-            else:
-                # Look for any JSON block
-                start_idx = analysis_text.find('{')
-                end_idx = analysis_text.rfind('}') + 1
-                if start_idx >= 0 and end_idx > start_idx:
-                    json_str = analysis_text[start_idx:end_idx]
-                    analysis = json.loads(json_str)
-                else:
-                    # Create a structured response from the text
-                    analysis = {
-                        "languages": extract_languages(analysis_text),
-                        "services": extract_services(analysis_text),
-                        "recommendations": extract_recommendations(analysis_text),
-                        "resources": [],
-                        "terraform_template": extract_terraform_template(analysis_text),
-                        "estimatedCost": "Unknown",
-                        "warnings": []
-                    }
-        except json.JSONDecodeError:
-            # If JSON parsing fails, create a structured response from the text
-            analysis = {
-                "languages": extract_languages(analysis_text),
-                "services": extract_services(analysis_text),
-                "recommendations": extract_recommendations(analysis_text),
-                "resources": [],
-                "terraform_template": extract_terraform_template(analysis_text),
-                "estimatedCost": "Unknown",
-                "warnings": []
-            }
-        
-        # If we don't have a Terraform template yet, generate one
-        if not analysis.get("terraform_template") or analysis["terraform_template"] == "":
-            terraform_template = generate_terraform_template(repo_path, data, analysis)
-            analysis["terraform_template"] = terraform_template
-        
-        return analysis
+    response = requests.post(url, headers=headers, json=data)
+    if response.status_code != 200:
+        raise Exception(f"Gemini API error: {response.text}")
     
-    except Exception as e:
-        if data.get("verbose"):
-            print(f"Error using Gemini for analysis: {str(e)}")
-        return fallback_analyze(repo_path, data)
+    return response.json()
 
 def create_analysis_prompt(repo_path, data):
     """
@@ -189,91 +150,113 @@ languages, services, recommendations, terraform_template, estimatedCost, warning
     
     return prompt
 
-def generate_terraform_template(repo_path, data, analysis):
-    """
-    Generate a Terraform template using RAG and Gemini
-    
-    Args:
-        repo_path (str): Path to the repository
-        data (dict): Repository analysis data
-        analysis (dict): Analysis results
-        
-    Returns:
-        str: Terraform template
-    """
-    if not GOOGLE_API_KEY:
-        return "# Terraform template generation requires Google API key"
-    
-    try:
-        # Configure the Gemini API if not already configured
-        if not genai._configured:
-            genai.configure(api_key=GOOGLE_API_KEY)
-        
-        # Get Gemini model
-        model = genai.GenerativeModel("gemini-1.5-pro")
-        
-        # Create query for RAG
-        query = f"Infrastructure for {data.get('framework', {}).get('language', 'unknown')} "
-        
-        if data.get('framework', {}).get('frontend'):
-            query += f"with {data['framework']['frontend']} frontend "
-        
-        if data.get('framework', {}).get('backend'):
-            query += f"and {data['framework']['backend']} backend "
-        
-        if len(analysis.get('services', [])) > 0:
-            query += f"using AWS {', '.join(analysis['services'])} "
-        
-        # Retrieve similar templates
-        similar_templates = rag_manager.retrieve_similar_templates(query)
-        
-        # Extract template types and build context
-        template_types = []
-        context = "Here are some relevant Terraform templates for reference:\n\n"
-        
-        for template in similar_templates:
-            template_type = template['metadata']['type']
-            if template_type not in template_types:
-                template_types.append(template_type)
-                full_template = rag_manager.get_template_by_name(template_type)
-                if full_template:
-                    context += f"Terraform template for {template_type}:\n```terraform\n{full_template[:1500]}...\n```\n\n"
-        
-        # Create prompt for Terraform template generation
-        prompt = f"""
-I need a complete Terraform template for an AWS infrastructure deployment based on the following repository analysis:
+def generate_terraform_template(repo_info, services):
+    """Generate basic Terraform template based on services"""
+    template = """provider "aws" {
+  region = var.region
+}
 
-Repository Path: {repo_path}
-
-Language: {data.get('framework', {}).get('language', 'Unknown')}
-Frontend: {data.get('framework', {}).get('frontend', 'None')}
-Backend: {data.get('framework', {}).get('backend', 'None')}
-Database: {data.get('framework', {}).get('database', 'None')}
-
-Detected AWS services: {', '.join(analysis.get('services', ['None']))}
-
-Recommendations:
-{chr(10).join(['- ' + rec for rec in analysis.get('recommendations', ['No recommendations'])])}
-
-{context}
-
-Please generate a complete and well-structured Terraform template that can be used to deploy the infrastructure for this repository.
-Include all necessary providers, variables, resources, and outputs.
-Make the template modular and follow Terraform best practices.
-The template should be ready to use with minimal modifications.
 """
-        
-        # Generate response
-        response = model.generate_content(prompt)
-        terraform_template = response.text
-        
-        # Extract the Terraform template from the response
-        return extract_terraform_template(terraform_template)
     
-    except Exception as e:
-        if data.get("verbose"):
-            print(f"Error generating Terraform template: {str(e)}")
-        return "# Failed to generate Terraform template\n# Please check your Google API key and try again"
+    if "Lambda" in services:
+        template += """resource "aws_lambda_function" "api" {
+  function_name    = "${var.app_name}-${var.environment}"
+  handler          = "index.handler"
+  runtime          = "nodejs18.x"
+  filename         = "${path.module}/lambda.zip"
+  source_code_hash = filebase64sha256("${path.module}/lambda.zip")
+  role             = aws_iam_role.lambda_role.arn
+  timeout          = var.lambda_timeout
+  memory_size      = var.lambda_memory_size
+  
+  environment {
+    variables = {
+      ENVIRONMENT = var.environment
+    }
+  }
+}
+
+resource "aws_iam_role" "lambda_role" {
+  name = "${var.app_name}-${var.environment}-lambda-role"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+"""
+    
+    if "API Gateway" in services:
+        template += """resource "aws_api_gateway_rest_api" "api" {
+  name        = "${var.app_name}-${var.environment}-api"
+  description = "API Gateway for ${var.app_name}"
+}
+
+resource "aws_api_gateway_deployment" "api" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  stage_name  = var.environment
+}
+
+"""
+    
+    if "CloudFront" in services:
+        template += """resource "aws_cloudfront_distribution" "cdn" {
+  enabled = true
+  
+  origin {
+    domain_name = aws_api_gateway_deployment.api.invoke_url
+    origin_id   = "api-gateway"
+    
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "https-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+  
+  default_cache_behavior {
+    allowed_methods  = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods   = ["GET", "HEAD"]
+    target_origin_id = "api-gateway"
+    
+    forwarded_values {
+      query_string = true
+      
+      cookies {
+        forward = "all"
+      }
+    }
+    
+    viewer_protocol_policy = "redirect-to-https"
+    min_ttl                = 0
+    default_ttl            = 3600
+    max_ttl                = 86400
+  }
+  
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+  
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+}
+
+"""
+    
+    return template
 
 def extract_terraform_template(text):
     """Extract Terraform template from AI response text"""
@@ -413,106 +396,28 @@ def extract_recommendations(text):
     # Limit to 5 recommendations maximum
     return recommendations[:5]
 
-def fallback_analyze(repo_path, data):
-    """
-    Fallback analysis when AI is unavailable
-    
-    Args:
-        repo_path (str): Path to the repository
-        data (dict): Repository analysis data
-        
-    Returns:
-        dict: Basic analysis results with simple Terraform template
-    """
-    if data.get("verbose"):
-        print("Using fallback analysis without AI")
-    
-    framework = data.get("framework", {})
-    infrastructure = data.get("infrastructure", {})
-    
-    # Determine language
-    language = None
-    if framework and framework.get("language"):
-        language = framework["language"]
-    
-    # Basic recommendations based on detected frameworks
+def fallback_analyze(repo_info):
+    """Fallback analysis when AI is not available"""
+    # Basic analysis based on detected languages
+    services = []
     recommendations = []
     
-    if language == "JavaScript/Node.js":
-        if framework.get("backend") in ["Express", "Koa", "Fastify", "NestJS"]:
-            recommendations.append("Deploy as an AWS Lambda function with API Gateway for the Node.js backend")
-        elif "Serverless Framework" in framework.get("other", []):
-            recommendations.append("Use the existing Serverless Framework configuration to deploy to AWS Lambda")
-        else:
-            recommendations.append("Deploy the Node.js application using AWS Elastic Beanstalk")
-        
-        if framework.get("frontend") == "React":
-            recommendations.append("Host the React frontend on AWS S3 with CloudFront for caching")
+    if "Python" in repo_info["languages"]:
+        services.extend(["Lambda", "API Gateway"])
+        recommendations.append("Consider using AWS Lambda for Python application")
     
-    elif language == "Python":
-        if framework.get("backend") == "Django":
-            recommendations.append("Deploy Django application on AWS Elastic Beanstalk with RDS for database")
-        elif framework.get("backend") == "Flask":
-            recommendations.append("Deploy Flask application as AWS Lambda functions with API Gateway")
-        else:
-            recommendations.append("Deploy Python application on AWS Lambda for serverless execution")
+    if "JavaScript" in repo_info["languages"] or "TypeScript" in repo_info["languages"]:
+        services.extend(["Lambda", "API Gateway", "CloudFront"])
+        recommendations.append("Consider using AWS Lambda with Node.js runtime")
     
-    # Add database recommendations
-    if framework.get("database"):
-        if "MongoDB" in framework.get("database"):
-            recommendations.append("Use MongoDB Atlas or DocumentDB for MongoDB database")
-        elif "SQL" in framework.get("database") or "Postgres" in framework.get("database"):
-            recommendations.append("Use AWS RDS for SQL database needs")
-    
-    # Add recommendations based on detected infrastructure
-    if infrastructure.get("docker"):
-        recommendations.append("Use AWS ECS or EKS to deploy the Docker containers")
-    
-    if infrastructure.get("kubernetes"):
-        recommendations.append("Use AWS EKS for Kubernetes cluster management")
-    
-    # Add default recommendation if none were added
-    if not recommendations:
-        recommendations.append("Deploy on AWS Elastic Beanstalk for a managed platform experience")
-        recommendations.append("Consider using AWS Lambda for serverless compute if applicable")
-    
-    # Detect services based on recommendations and infrastructure
-    services = []
-    if "Lambda" in " ".join(recommendations):
-        services.append("Lambda")
-    if "API Gateway" in " ".join(recommendations):
-        services.append("API Gateway")
-    if "S3" in " ".join(recommendations):
-        services.append("S3")
-    if "CloudFront" in " ".join(recommendations):
-        services.append("CloudFront")
-    if "Elastic Beanstalk" in " ".join(recommendations):
-        services.append("Elastic Beanstalk")
-    if "ECS" in " ".join(recommendations) or "EKS" in " ".join(recommendations):
-        services.append("ECS" if "ECS" in " ".join(recommendations) else "EKS")
-    if "RDS" in " ".join(recommendations):
-        services.append("RDS")
-    
-    # Detect languages based on framework
-    languages = []
-    if language == "JavaScript/Node.js":
-        languages.extend(["JavaScript", "Node.js"])
-        if framework.get("frontend") == "React":
-            languages.extend(["JSX", "HTML", "CSS"])
-    elif language == "Python":
-        languages.append("Python")
-    
-    # Generate a simple Terraform template based on detected services
-    terraform_template = generate_fallback_terraform_template(services, language, framework)
+    if "Java" in repo_info["languages"]:
+        services.extend(["ECS", "Fargate", "Application Load Balancer"])
+        recommendations.append("Consider using ECS Fargate for Java application")
     
     return {
-        "languages": languages,
-        "services": services,
+        "services": list(set(services)),
         "recommendations": recommendations,
-        "resources": [],
-        "terraform_template": terraform_template,
-        "estimatedCost": "Varies depending on usage",
-        "warnings": ["This is a basic analysis without AI assistance. For more detailed recommendations, please provide a Google API key."]
+        "terraform_template": generate_terraform_template(repo_info, services)
     }
 
 def generate_fallback_terraform_template(services, language, framework):

@@ -2,7 +2,7 @@
 Repository analyzer module
 """
 import os
-import yaml
+import json
 from pathlib import Path
 from git import Repo, InvalidGitRepositoryError
 
@@ -10,7 +10,81 @@ from inframate.analyzers.framework import detect_framework
 from inframate.analyzers.infrastructure import detect_infrastructure
 from inframate.agents.ai_analyzer import analyze_with_ai
 
-def analyze_repository(repo_path, verbose=False):
+def analyze_repository(repo_path):
+    """Analyze a repository for infrastructure requirements"""
+    try:
+        # Initialize repository object
+        repo = Repo(repo_path)
+        
+        # Read inframate.md
+        md_path = Path(repo_path) / "inframate.md"
+        if not md_path.exists():
+            raise FileNotFoundError("inframate.md not found in repository")
+        
+        with open(md_path, 'r') as f:
+            requirements = f.read()
+        
+        # Get repository information
+        repo_info = {
+            "name": os.path.basename(repo_path),
+            "branch": repo.active_branch.name,
+            "requirements": requirements,
+            "files": [f for f in repo.git.ls_files().split('\n')],
+            "languages": detect_languages(repo_path)
+        }
+        
+        return repo_info
+        
+    except InvalidGitRepositoryError:
+        raise ValueError(f"{repo_path} is not a valid Git repository")
+    except Exception as e:
+        raise Exception(f"Error analyzing repository: {str(e)}")
+
+def detect_languages(repo_path):
+    """Detect programming languages used in the repository"""
+    # Common file extensions and their languages
+    language_extensions = {
+        '.py': 'Python',
+        '.js': 'JavaScript',
+        '.ts': 'TypeScript',
+        '.java': 'Java',
+        '.go': 'Go',
+        '.rb': 'Ruby',
+        '.php': 'PHP',
+        '.rs': 'Rust',
+        '.cpp': 'C++',
+        '.c': 'C',
+        '.cs': 'C#',
+        '.swift': 'Swift',
+        '.kt': 'Kotlin',
+        '.scala': 'Scala',
+        '.dart': 'Dart',
+        '.sh': 'Shell',
+        '.pl': 'Perl',
+        '.lua': 'Lua',
+        '.r': 'R',
+        '.m': 'MATLAB',
+        '.sql': 'SQL',
+        '.html': 'HTML',
+        '.css': 'CSS',
+        '.json': 'JSON',
+        '.yaml': 'YAML',
+        '.yml': 'YAML',
+        '.xml': 'XML',
+        '.md': 'Markdown'
+    }
+    
+    detected_languages = set()
+    
+    for root, _, files in os.walk(repo_path):
+        for file in files:
+            ext = os.path.splitext(file)[1].lower()
+            if ext in language_extensions:
+                detected_languages.add(language_extensions[ext])
+    
+    return list(detected_languages)
+
+def analyze_repository_old(repo_path, verbose=False):
     """
     Analyzes a repository to understand its deployment requirements
     
