@@ -41,17 +41,45 @@ jobs:
           cd inframate
           pip install -e .
 
+      - name: Create sample inframate.md if needed
+        run: |
+          cd target_repo
+          if [ ! -f "inframate.md" ]; then
+            echo "Creating sample inframate.md file"
+            cat > inframate.md << 'EOL'
+          # Inframate Configuration
+
+          ## Description
+          This is an automated infrastructure analysis by Inframate.
+
+          ## Language
+          Detected automatically
+
+          ## Framework
+          Detected automatically
+
+          ## Database
+          None
+
+          ## Requirements
+          - High availability
+          - Auto-scaling
+          - Cost-effective deployment
+          EOL
+          fi
+
       - name: Run Inframate
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           cd target_repo
-          inframate .
+          python -m inframate.flow .
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          path: target_repo
           commit-message: "Inframate: Generated Terraform files"
           title: "Inframate: Infrastructure Recommendations and Terraform Files"
           body: |
