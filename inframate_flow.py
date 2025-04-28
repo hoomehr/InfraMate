@@ -645,7 +645,7 @@ def main():
         
         # Generate Terraform files
         terraform_dir = Path(repo_path) / "terraform"
-        generate_terraform_files(repo_info, analysis_result, str(terraform_dir))
+        create_terraform_files(repo_path, analysis_result, repo_info)
         
         print("Inframate analysis complete!")
         print(f"Terraform files generated in: {terraform_dir}")
