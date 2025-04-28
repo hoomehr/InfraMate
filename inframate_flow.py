@@ -9,11 +9,13 @@ import yaml
 import shutil
 import requests
 from pathlib import Path
+from typing import Dict, Any
 
 # Import Inframate components
 try:
     from inframate.analyzers.repository import analyze_repository
     from inframate.agents.ai_analyzer import analyze_with_ai, fallback_analyze, generate_terraform_template
+    from inframate.utils.rag import RAGManager
 except ImportError:
     print("Error: Inframate modules not found. Please make sure Inframate is installed correctly.")
     sys.exit(1)
@@ -22,19 +24,31 @@ except ImportError:
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
-def read_inframate_md(repo_path):
-    """Read and parse inframate.md file"""
-    md_path = Path(repo_path) / "inframate.md"
-    if not md_path.exists():
-        raise FileNotFoundError("inframate.md not found in repository")
+def read_inframate_file(repo_path: str) -> Dict[str, Any]:
+    """Read and parse the inframate.md file"""
+    inframate_path = Path(repo_path) / "inframate.md"
+    if not inframate_path.exists():
+        raise FileNotFoundError("inframate.md file not found in repository")
     
-    with open(md_path, 'r') as f:
-        return f.read()
+    with open(inframate_path, "r") as f:
+        content = f.read()
+    
+    # Basic parsing of markdown content
+    # This is a simple implementation - you might want to enhance it
+    sections = content.split("##")
+    info = {}
+    for section in sections[1:]:  # Skip the first empty section
+        lines = section.strip().split("\n")
+        title = lines[0].strip()
+        content = "\n".join(lines[1:]).strip()
+        info[title.lower()] = content
+    
+    return info
 
 def analyze_repository(repo_path):
     """Analyze repository structure and requirements"""
     # Read inframate.md
-    requirements = read_inframate_md(repo_path)
+    requirements = read_inframate_file(repo_path)
     
     # Get Gemini API key from environment
     api_key = os.getenv('GEMINI_API_KEY')
@@ -199,49 +213,64 @@ def fallback_analyze(md_data):
         "terraform_template": generate_terraform_template(md_data, services)
     }
 
-def create_terraform_files(repo_path, analysis, md_data):
-    """Create Terraform files in the root directory"""
-    print("Generating Terraform files...")
+def generate_terraform_files(repo_info: Dict[str, Any], analysis_result: Dict[str, Any], output_dir: str) -> None:
+    """Generate Terraform files based on analysis results"""
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
     
-    # Create terraform directory if it doesn't exist
-    tf_dir = os.path.join(repo_path, 'terraform')
-    os.makedirs(tf_dir, exist_ok=True)
+    # Initialize RAG manager for template retrieval
+    rag_manager = RAGManager()
+    
+    # Load templates from the templates directory
+    templates_dir = Path(__file__).parent / "templates" / "terraform"
+    rag_manager.load_templates(str(templates_dir))
     
     # Generate main.tf
-    terraform_template = ""
-    if "terraform_template" in analysis and analysis["terraform_template"]:
-        terraform_template = analysis["terraform_template"]
-    else:
-        print("No Terraform template in analysis, generating basic template...")
-        # Use local templates based on language/framework
-        terraform_template = generate_terraform_template(md_data, analysis.get("services", []))
+    main_tf_content = analysis_result.get("terraform_template", "")
+    if not main_tf_content:
+        # Fallback to basic template if no AI-generated template
+        main_tf_content = """provider "aws" {
+  region = var.aws_region
+}
+
+# Add your resources here
+"""
     
-    # Create main.tf
-    with open(os.path.join(tf_dir, 'main.tf'), 'w') as f:
-        f.write(terraform_template)
+    with open(output_path / "main.tf", "w") as f:
+        f.write(main_tf_content)
     
-    # Create variables.tf
-    variables_tf = generate_variables_tf(md_data)
-    with open(os.path.join(tf_dir, 'variables.tf'), 'w') as f:
+    # Generate variables.tf
+    variables_tf = """variable "aws_region" {
+  description = "AWS region"
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "environment" {
+  description = "Environment name"
+  type        = string
+  default     = "dev"
+}
+"""
+    with open(output_path / "variables.tf", "w") as f:
         f.write(variables_tf)
     
-    # Create outputs.tf
-    outputs_tf = generate_outputs_tf(md_data)
-    with open(os.path.join(tf_dir, 'outputs.tf'), 'w') as f:
+    # Generate outputs.tf
+    outputs_tf = """output "environment" {
+  description = "Environment name"
+  value       = var.environment
+}
+"""
+    with open(output_path / "outputs.tf", "w") as f:
         f.write(outputs_tf)
     
-    # Create terraform.tfvars
-    tfvars = generate_tfvars(md_data)
-    with open(os.path.join(tf_dir, 'terraform.tfvars'), 'w') as f:
-        f.write(tfvars)
-    
-    # Create README.md
-    readme = generate_readme(md_data, analysis)
-    with open(os.path.join(tf_dir, 'README.md'), 'w') as f:
-        f.write(readme)
-    
-    print(f"Terraform files created in {tf_dir}")
-    return tf_dir
+    # Generate terraform.tfvars
+    tfvars = {
+        "aws_region": "us-east-1",
+        "environment": "dev"
+    }
+    with open(output_path / "terraform.tfvars", "w") as f:
+        json.dump(tfvars, f, indent=2)
 
 def generate_terraform_template(md_data, services):
     """Generate Terraform template based on detected services"""
@@ -590,152 +619,36 @@ resource "aws_security_group" "app_sg" {
 }
 """
 
-def generate_variables_tf(md_data):
-    """Generate variables.tf file"""
-    return """# Variables for Terraform configuration
-
-variable "region" {
-  description = "AWS region to deploy to"
-  type        = string
-  default     = "us-east-1"
-}
-
-variable "app_name" {
-  description = "Name of the application"
-  type        = string
-  default     = "app"
-}
-
-variable "environment" {
-  description = "Deployment environment"
-  type        = string
-  default     = "dev"
-}
-
-variable "lambda_timeout" {
-  description = "Lambda function timeout in seconds"
-  type        = number
-  default     = 30
-}
-
-variable "lambda_memory_size" {
-  description = "Lambda function memory size in MB"
-  type        = number
-  default     = 512
-}
-
-variable "mongo_uri" {
-  description = "MongoDB connection string"
-  type        = string
-  default     = "mongodb://localhost:27017/app"
-  sensitive   = true
-}
-
-variable "instance_type" {
-  description = "EC2 instance type"
-  type        = string
-  default     = "t2.micro"
-}
-
-variable "ami_id" {
-  description = "AMI ID for EC2 instance"
-  type        = string
-  default     = "ami-0c55b159cbfafe1f0"  # Amazon Linux 2 AMI (HVM), SSD Volume Type
-}
-
-variable "key_name" {
-  description = "SSH key pair name"
-  type        = string
-  default     = null
-}
-"""
-
-def generate_outputs_tf(md_data):
-    """Generate outputs.tf file"""
-    return """# Outputs for Terraform configuration
-
-output "api_url" {
-  description = "URL of the API Gateway (if deployed)"
-  value       = aws_api_gateway_deployment.api.invoke_url
-}
-
-output "lambda_function_name" {
-  description = "Name of the Lambda function (if deployed)"
-  value       = aws_lambda_function.api.function_name
-}
-"""
-
-def generate_tfvars(md_data):
-    """Generate terraform.tfvars file"""
-    app_name = "json-api-app"
-    if md_data.get("language") and md_data.get("framework"):
-        app_name = f"{md_data['language'].lower().replace('.', '-').replace('/', '-')}-{md_data['framework'].lower()}-app"
-    
-    mongo_uri = "mongodb://localhost:27017/items_db"
-    if md_data.get("database") and "MongoDB" in md_data["database"]:
-        mongo_uri = "mongodb://localhost:27017/items_db"
-    
-    return f"""region = "us-east-1"
-app_name = "{app_name}"
-environment = "dev"
-lambda_timeout = 30
-lambda_memory_size = 512
-mongo_uri = "{mongo_uri}"
-"""
-
-def generate_readme(md_data, analysis):
-    """Generate README.md file"""
-    recommendations = "\n".join([f"- {rec}" for rec in analysis.get("recommendations", [])])
-    services = "\n".join([f"- {service}" for service in analysis.get("services", [])])
-    
-    return f"""# Infrastructure Deployment for {md_data.get('description', 'Application')}
-
-## Analysis Results
-
-### Detected Services:
-{services}
-
-### Recommendations:
-{recommendations}
-
-## Deployment Instructions
-
-1. **Prerequisites**:
-   - AWS CLI configured with appropriate credentials
-   - Terraform installed (v1.0.0+)
-
-2. **Configuration**:
-   - Update variables in `terraform.tfvars` or via environment variables
-
-3. **Deployment**:
-   ```bash
-   terraform init
-   terraform plan
-   terraform apply
-   ```
-
-4. **Cleanup**:
-   ```bash
-   terraform destroy
-   ```
-"""
-
 def main():
-    """Main function"""
+    """Main entry point for Inframate"""
     if len(sys.argv) != 2:
         print("Usage: python inframate_flow.py <repository_path>")
         sys.exit(1)
     
     repo_path = sys.argv[1]
+    
     try:
-        # Analyze repository
-        analysis = analyze_repository(repo_path)
+        # Read repository information
+        repo_info = read_inframate_file(repo_path)
+        
+        # Analyze repository structure
+        repo_analysis = analyze_repository(repo_path)
+        repo_info.update(repo_analysis)
+        
+        # Get AI analysis
+        try:
+            analysis_result = analyze_with_ai(repo_info)
+        except Exception as e:
+            print(f"AI analysis failed: {str(e)}")
+            print("Falling back to basic analysis...")
+            analysis_result = fallback_analyze(repo_info)
         
         # Generate Terraform files
-        generate_terraform_files(repo_path, analysis)
+        terraform_dir = Path(repo_path) / "terraform"
+        generate_terraform_files(repo_info, analysis_result, str(terraform_dir))
         
-        print("Inframate analysis completed successfully")
-        print("Terraform files generated in terraform/ directory")
+        print("Inframate analysis complete!")
+        print(f"Terraform files generated in: {terraform_dir}")
         
     except Exception as e:
         print(f"Error: {str(e)}")

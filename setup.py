@@ -29,7 +29,8 @@ setup(
         "langchain-huggingface>=0.0.2",
         "sentence-transformers>=2.2.2",
         "faiss-cpu>=1.7.4",
-        "colorama>=0.4.6"
+        "colorama>=0.4.6",
+        "huggingface_hub[hf_xet]>=0.20.3"
     ],
     classifiers=[
         "Programming Language :: Python :: 3",
