@@ -1,0 +1,767 @@
+#!/usr/bin/env python3
+"""
+Inframate Flow - Read inframate.md, generate recommendations, and create TF folder with files
+"""
+import os
+import sys
+import json
+import yaml
+import shutil
+import requests
+from pathlib import Path
+
+# Import Inframate components
+try:
+    from inframate.analyzers.repository import analyze_repository
+    from inframate.agents.ai_analyzer import analyze_with_ai, fallback_analyze, generate_terraform_template
+except ImportError:
+    print("Error: Inframate modules not found. Please make sure Inframate is installed correctly.")
+    sys.exit(1)
+
+# Gemini API key and endpoint
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+
+def read_inframate_md(repo_path):
+    """Read and parse the inframate.md file"""
+    inframate_path = os.path.join(repo_path, 'inframate.md')
+    if not os.path.exists(inframate_path):
+        print(f"Error: inframate.md not found in {repo_path}")
+        return None
+    
+    print(f"Reading inframate.md from {inframate_path}...")
+    with open(inframate_path, 'r') as f:
+        content = f.read()
+    
+    # Simple parser for inframate.md (this could be more sophisticated)
+    result = {
+        "description": "",
+        "language": "",
+        "framework": "",
+        "database": "",
+        "requirements": [],
+        "preferences": []
+    }
+    
+    # Extract technical details
+    if "## Technical Details" in content:
+        tech_section = content.split("## Technical Details")[1].split("##")[0].strip()
+        for line in tech_section.split('\n'):
+            if line.startswith('- **Language**:'):
+                result["language"] = line.split(':')[1].strip()
+            elif line.startswith('- **Framework**:'):
+                result["framework"] = line.split(':')[1].strip()
+            elif line.startswith('- **Database**:'):
+                result["database"] = line.split(':')[1].strip()
+    
+    # Extract requirements
+    if "## Infrastructure Requirements" in content:
+        req_section = content.split("## Infrastructure Requirements")[1].split("##")[0].strip()
+        result["requirements"] = [line.strip()[2:] for line in req_section.split('\n') if line.strip().startswith('-')]
+    
+    # Extract preferences
+    if "## Deployment Preferences" in content:
+        pref_section = content.split("## Deployment Preferences")[1].split("##")[0].strip()
+        result["preferences"] = [line.strip()[2:] for line in pref_section.split('\n') if line.strip().startswith('-')]
+    
+    # Extract general description
+    if "# " in content and "\n" in content:
+        result["description"] = content.split('\n')[0].replace('# ', '').strip()
+        if "\n\n" in content:
+            result["description"] += " " + content.split('\n\n')[1].strip()
+    
+    # Store the full content for AI analysis
+    result["full_content"] = content
+    
+    return result
+
+def analyze_with_gemini(md_data):
+    """Analyze repository data using Gemini API"""
+    if not GEMINI_API_KEY:
+        print("Error: GEMINI_API_KEY not set. Using fallback analysis.")
+        return fallback_analyze(md_data)
+    
+    print("Using Gemini API to generate recommendations...")
+    
+    prompt = f"""
+I have a {md_data['language']} application using {md_data['framework']} framework with {md_data['database']} database.
+Here's the full description of my application and infrastructure requirements:
+
+{md_data.get('full_content', '')}
+
+Based on this information, please provide:
+1. A list of recommended AWS services for deployment
+2. Infrastructure recommendations for this application
+3. A Terraform template for deploying this application to AWS
+
+Format your response with clear sections for:
+- RECOMMENDED_SERVICES: (comma-separated list)
+- RECOMMENDATIONS: (bullet points)
+- TERRAFORM_TEMPLATE: (complete, production-ready Terraform code)
+"""
+    
+    try:
+        # Prepare Gemini API request
+        request_data = {
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }]
+        }
+        
+        # Add API key to URL
+        url = f"{GEMINI_API_URL}?key={GEMINI_API_KEY}"
+        
+        # Make API request
+        response = requests.post(
+            url,
+            headers={"Content-Type": "application/json"},
+            json=request_data
+        )
+        
+        # Check response status
+        if response.status_code != 200:
+            print(f"Error calling Gemini API: {response.status_code} - {response.text}")
+            return fallback_analyze(md_data)
+        
+        # Parse response
+        response_data = response.json()
+        ai_response = response_data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+        
+        # Extract services, recommendations, and Terraform template
+        services = []
+        recommendations = []
+        terraform_template = ""
+        
+        if "RECOMMENDED_SERVICES:" in ai_response:
+            services_text = ai_response.split("RECOMMENDED_SERVICES:")[1].split("\n")[0].strip()
+            services = [service.strip() for service in services_text.split(",")]
+        
+        if "RECOMMENDATIONS:" in ai_response:
+            recommendations_section = ai_response.split("RECOMMENDATIONS:")[1].split("TERRAFORM_TEMPLATE:")[0].strip()
+            recommendations = [rec.strip().lstrip("- ") for rec in recommendations_section.split("\n") if rec.strip()]
+        
+        if "TERRAFORM_TEMPLATE:" in ai_response:
+            template_section = ai_response.split("TERRAFORM_TEMPLATE:")[1].strip()
+            # Find the Terraform code block which is often enclosed in ``` markers
+            if "```terraform" in template_section and "```" in template_section:
+                start = template_section.find("```terraform") + len("```terraform")
+                end = template_section.find("```", start)
+                terraform_template = template_section[start:end].strip()
+            elif "```" in template_section:
+                # Try to find a generic code block
+                parts = template_section.split("```")
+                if len(parts) > 1:
+                    terraform_template = parts[1].strip()
+            else:
+                # Just use everything
+                terraform_template = template_section
+        
+        return {
+            "services": services,
+            "recommendations": recommendations,
+            "terraform_template": terraform_template
+        }
+        
+    except Exception as e:
+        print(f"Error using Gemini API: {str(e)}")
+        return fallback_analyze(md_data)
+
+def fallback_analyze(md_data):
+    """Provide basic analysis when AI is not available"""
+    print("Using fallback analysis without AI...")
+    
+    services = []
+    recommendations = []
+    
+    # Detect services based on framework and language
+    if "Node.js" in md_data["language"]:
+        services.extend(["Lambda", "API Gateway"])
+        
+    if "Express" in md_data["framework"]:
+        services.extend(["Lambda", "API Gateway"])
+    
+    if "MongoDB" in md_data["database"]:
+        recommendations.append("Use MongoDB Atlas or DocumentDB for MongoDB database")
+    
+    # Check infrastructure requirements
+    for req in md_data.get("requirements", []):
+        if "high" in req.lower() and "available" in req.lower():
+            recommendations.append("Deploy across multiple availability zones for high availability")
+        
+        if "auto" in req.lower() and "scale" in req.lower():
+            services.append("Auto Scaling")
+            recommendations.append("Configure auto-scaling for your application")
+        
+        if "https" in req.lower():
+            services.append("CloudFront")
+            recommendations.append("Use CloudFront with ACM for HTTPS support")
+    
+    # Deduplicate services
+    services = list(set(services))
+    
+    return {
+        "languages": [md_data["language"]],
+        "services": services,
+        "recommendations": recommendations,
+        "terraform_template": generate_terraform_template(md_data, services)
+    }
+
+def create_terraform_files(repo_path, analysis, md_data):
+    """Create Terraform files in the root directory"""
+    print("Generating Terraform files...")
+    
+    # Create terraform directory if it doesn't exist
+    tf_dir = os.path.join(repo_path, 'terraform')
+    os.makedirs(tf_dir, exist_ok=True)
+    
+    # Generate main.tf
+    terraform_template = ""
+    if "terraform_template" in analysis and analysis["terraform_template"]:
+        terraform_template = analysis["terraform_template"]
+    else:
+        print("No Terraform template in analysis, generating basic template...")
+        # Use local templates based on language/framework
+        terraform_template = generate_terraform_template(md_data, analysis.get("services", []))
+    
+    # Create main.tf
+    with open(os.path.join(tf_dir, 'main.tf'), 'w') as f:
+        f.write(terraform_template)
+    
+    # Create variables.tf
+    variables_tf = generate_variables_tf(md_data)
+    with open(os.path.join(tf_dir, 'variables.tf'), 'w') as f:
+        f.write(variables_tf)
+    
+    # Create outputs.tf
+    outputs_tf = generate_outputs_tf(md_data)
+    with open(os.path.join(tf_dir, 'outputs.tf'), 'w') as f:
+        f.write(outputs_tf)
+    
+    # Create terraform.tfvars
+    tfvars = generate_tfvars(md_data)
+    with open(os.path.join(tf_dir, 'terraform.tfvars'), 'w') as f:
+        f.write(tfvars)
+    
+    # Create README.md
+    readme = generate_readme(md_data, analysis)
+    with open(os.path.join(tf_dir, 'README.md'), 'w') as f:
+        f.write(readme)
+    
+    print(f"Terraform files created in {tf_dir}")
+    return tf_dir
+
+def generate_terraform_template(md_data, services):
+    """Generate Terraform template based on detected services"""
+    # Detect the proper template to use
+    if "Node.js" in md_data["language"] and "Express" in md_data["framework"]:
+        return generate_nodejs_terraform(md_data)
+    elif "Python" in md_data["language"]:
+        return generate_python_terraform(md_data)
+    else:
+        return generate_generic_terraform(md_data)
+
+def generate_nodejs_terraform(md_data):
+    """Generate Terraform for Node.js/Express applications"""
+    return """# Terraform configuration for Node.js/Express API with MongoDB
+provider "aws" {
+  region = var.region
+}
+
+# Lambda function for the Express.js API
+resource "aws_lambda_function" "api" {
+  function_name    = "${var.app_name}-${var.environment}"
+  handler          = "src/lambda.handler"
+  runtime          = "nodejs18.x"
+  filename         = "${path.module}/lambda.zip"
+  source_code_hash = filebase64sha256("${path.module}/lambda.zip")
+  role             = aws_iam_role.lambda_role.arn
+  timeout          = var.lambda_timeout
+  memory_size      = var.lambda_memory_size
+  
+  environment {
+    variables = {
+      NODE_ENV = var.environment
+      MONGO_URI = var.mongo_uri
+    }
+  }
+
+  tags = {
+    Name        = "${var.app_name}-api"
+    Environment = var.environment
+  }
+}
+
+# IAM role for Lambda
+resource "aws_iam_role" "lambda_role" {
+  name = "${var.app_name}-${var.environment}-lambda-role"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+# Attach basic Lambda execution role
+resource "aws_iam_role_policy_attachment" "lambda_basic" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# API Gateway
+resource "aws_api_gateway_rest_api" "api" {
+  name        = "${var.app_name}-${var.environment}-api"
+  description = "API Gateway for ${var.app_name}"
+}
+
+# Set up a proxy resource to catch all requests
+resource "aws_api_gateway_resource" "proxy" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_rest_api.api.root_resource_id
+  path_part   = "{proxy+}"
+}
+
+# ANY method for the proxy resource
+resource "aws_api_gateway_method" "proxy" {
+  rest_api_id   = aws_api_gateway_rest_api.api.id
+  resource_id   = aws_api_gateway_resource.proxy.id
+  http_method   = "ANY"
+  authorization_type = "NONE"
+}
+
+# Integration with Lambda
+resource "aws_api_gateway_integration" "lambda" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  resource_id = aws_api_gateway_resource.proxy.id
+  http_method = aws_api_gateway_method.proxy.http_method
+  
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = aws_lambda_function.api.invoke_arn
+}
+
+# Handle root path
+resource "aws_api_gateway_method" "root" {
+  rest_api_id   = aws_api_gateway_rest_api.api.id
+  resource_id   = aws_api_gateway_rest_api.api.root_resource_id
+  http_method   = "ANY"
+  authorization_type = "NONE"
+}
+
+resource "aws_api_gateway_integration" "root" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  resource_id = aws_api_gateway_rest_api.api.root_resource_id
+  http_method = aws_api_gateway_method.root.http_method
+  
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = aws_lambda_function.api.invoke_arn
+}
+
+# Deploy the API
+resource "aws_api_gateway_deployment" "api" {
+  depends_on = [
+    aws_api_gateway_integration.lambda,
+    aws_api_gateway_integration.root
+  ]
+  
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  stage_name  = var.environment
+}
+
+# Permission for API Gateway to invoke Lambda
+resource "aws_lambda_permission" "api_gateway" {
+  statement_id  = "AllowAPIGatewayInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.api.function_name
+  principal     = "apigateway.amazonaws.com"
+  
+  source_arn = "${aws_api_gateway_rest_api.api.execution_arn}/*/*"
+}
+
+# CloudWatch Log Group for Lambda
+resource "aws_cloudwatch_log_group" "lambda_logs" {
+  name              = "/aws/lambda/${aws_lambda_function.api.function_name}"
+  retention_in_days = 30
+}
+
+# Auto-scaling configuration for Lambda
+resource "aws_appautoscaling_target" "lambda_target" {
+  max_capacity       = 10
+  min_capacity       = 1
+  resource_id        = "function:${aws_lambda_function.api.function_name}:${aws_lambda_function.api.version}"
+  scalable_dimension = "lambda:function:ProvisionedConcurrency"
+  service_namespace  = "lambda"
+}
+
+resource "aws_appautoscaling_policy" "lambda_policy" {
+  name               = "${var.app_name}-${var.environment}-autoscaling-policy"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.lambda_target.resource_id
+  scalable_dimension = aws_appautoscaling_target.lambda_target.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.lambda_target.service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "LambdaProvisionedConcurrencyUtilization"
+    }
+    target_value = 0.75
+  }
+}
+"""
+
+def generate_python_terraform(md_data):
+    """Generate Terraform for Python applications"""
+    return """# Terraform configuration for Python Application
+provider "aws" {
+  region = var.region
+}
+
+# Lambda function for the Python API
+resource "aws_lambda_function" "api" {
+  function_name    = "${var.app_name}-${var.environment}"
+  handler          = "app.lambda_handler"
+  runtime          = "python3.9"
+  filename         = "${path.module}/lambda.zip"
+  source_code_hash = filebase64sha256("${path.module}/lambda.zip")
+  role             = aws_iam_role.lambda_role.arn
+  timeout          = var.lambda_timeout
+  memory_size      = var.lambda_memory_size
+  
+  environment {
+    variables = {
+      ENVIRONMENT = var.environment
+    }
+  }
+
+  tags = {
+    Name        = "${var.app_name}-api"
+    Environment = var.environment
+  }
+}
+
+# IAM role for Lambda
+resource "aws_iam_role" "lambda_role" {
+  name = "${var.app_name}-${var.environment}-lambda-role"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+# Attach basic Lambda execution role
+resource "aws_iam_role_policy_attachment" "lambda_basic" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# API Gateway
+resource "aws_api_gateway_rest_api" "api" {
+  name        = "${var.app_name}-${var.environment}-api"
+  description = "API Gateway for ${var.app_name}"
+}
+
+# Set up a proxy resource to catch all requests
+resource "aws_api_gateway_resource" "proxy" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_rest_api.api.root_resource_id
+  path_part   = "{proxy+}"
+}
+
+# ANY method for the proxy resource
+resource "aws_api_gateway_method" "proxy" {
+  rest_api_id   = aws_api_gateway_rest_api.api.id
+  resource_id   = aws_api_gateway_resource.proxy.id
+  http_method   = "ANY"
+  authorization_type = "NONE"
+}
+
+# Integration with Lambda
+resource "aws_api_gateway_integration" "lambda" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  resource_id = aws_api_gateway_resource.proxy.id
+  http_method = aws_api_gateway_method.proxy.http_method
+  
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = aws_lambda_function.api.invoke_arn
+}
+
+# Deploy the API
+resource "aws_api_gateway_deployment" "api" {
+  depends_on = [
+    aws_api_gateway_integration.lambda
+  ]
+  
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  stage_name  = var.environment
+}
+
+# Permission for API Gateway to invoke Lambda
+resource "aws_lambda_permission" "api_gateway" {
+  statement_id  = "AllowAPIGatewayInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.api.function_name
+  principal     = "apigateway.amazonaws.com"
+  
+  source_arn = "${aws_api_gateway_rest_api.api.execution_arn}/*/*"
+}
+"""
+
+def generate_generic_terraform(md_data):
+    """Generate a generic Terraform configuration"""
+    return """# Generic Terraform configuration
+provider "aws" {
+  region = var.region
+}
+
+# S3 bucket for application storage
+resource "aws_s3_bucket" "app_bucket" {
+  bucket = "${var.app_name}-${var.environment}-${var.region}"
+  
+  tags = {
+    Name        = "${var.app_name}"
+    Environment = var.environment
+  }
+}
+
+# EC2 instance for application
+resource "aws_instance" "app_server" {
+  ami           = var.ami_id
+  instance_type = var.instance_type
+  key_name      = var.key_name
+  
+  tags = {
+    Name        = "${var.app_name}-server"
+    Environment = var.environment
+  }
+}
+
+# Security group for EC2 instance
+resource "aws_security_group" "app_sg" {
+  name        = "${var.app_name}-sg"
+  description = "Security group for ${var.app_name}"
+  
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "SSH access"
+  }
+  
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTP access"
+  }
+  
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTPS access"
+  }
+  
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow all outbound traffic"
+  }
+  
+  tags = {
+    Name        = "${var.app_name}-sg"
+    Environment = var.environment
+  }
+}
+"""
+
+def generate_variables_tf(md_data):
+    """Generate variables.tf file"""
+    return """# Variables for Terraform configuration
+
+variable "region" {
+  description = "AWS region to deploy to"
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "app_name" {
+  description = "Name of the application"
+  type        = string
+  default     = "app"
+}
+
+variable "environment" {
+  description = "Deployment environment"
+  type        = string
+  default     = "dev"
+}
+
+variable "lambda_timeout" {
+  description = "Lambda function timeout in seconds"
+  type        = number
+  default     = 30
+}
+
+variable "lambda_memory_size" {
+  description = "Lambda function memory size in MB"
+  type        = number
+  default     = 512
+}
+
+variable "mongo_uri" {
+  description = "MongoDB connection string"
+  type        = string
+  default     = "mongodb://localhost:27017/app"
+  sensitive   = true
+}
+
+variable "instance_type" {
+  description = "EC2 instance type"
+  type        = string
+  default     = "t2.micro"
+}
+
+variable "ami_id" {
+  description = "AMI ID for EC2 instance"
+  type        = string
+  default     = "ami-0c55b159cbfafe1f0"  # Amazon Linux 2 AMI (HVM), SSD Volume Type
+}
+
+variable "key_name" {
+  description = "SSH key pair name"
+  type        = string
+  default     = null
+}
+"""
+
+def generate_outputs_tf(md_data):
+    """Generate outputs.tf file"""
+    return """# Outputs for Terraform configuration
+
+output "api_url" {
+  description = "URL of the API Gateway (if deployed)"
+  value       = aws_api_gateway_deployment.api.invoke_url
+}
+
+output "lambda_function_name" {
+  description = "Name of the Lambda function (if deployed)"
+  value       = aws_lambda_function.api.function_name
+}
+"""
+
+def generate_tfvars(md_data):
+    """Generate terraform.tfvars file"""
+    app_name = "json-api-app"
+    if md_data.get("language") and md_data.get("framework"):
+        app_name = f"{md_data['language'].lower().replace('.', '-').replace('/', '-')}-{md_data['framework'].lower()}-app"
+    
+    mongo_uri = "mongodb://localhost:27017/items_db"
+    if md_data.get("database") and "MongoDB" in md_data["database"]:
+        mongo_uri = "mongodb://localhost:27017/items_db"
+    
+    return f"""region = "us-east-1"
+app_name = "{app_name}"
+environment = "dev"
+lambda_timeout = 30
+lambda_memory_size = 512
+mongo_uri = "{mongo_uri}"
+"""
+
+def generate_readme(md_data, analysis):
+    """Generate README.md file"""
+    recommendations = "\n".join([f"- {rec}" for rec in analysis.get("recommendations", [])])
+    services = "\n".join([f"- {service}" for service in analysis.get("services", [])])
+    
+    return f"""# Infrastructure Deployment for {md_data.get('description', 'Application')}
+
+## Analysis Results
+
+### Detected Services:
+{services}
+
+### Recommendations:
+{recommendations}
+
+## Deployment Instructions
+
+1. **Prerequisites**:
+   - AWS CLI configured with appropriate credentials
+   - Terraform installed (v1.0.0+)
+
+2. **Configuration**:
+   - Update variables in `terraform.tfvars` or via environment variables
+
+3. **Deployment**:
+   ```bash
+   terraform init
+   terraform plan
+   terraform apply
+   ```
+
+4. **Cleanup**:
+   ```bash
+   terraform destroy
+   ```
+"""
+
+def main():
+    """Main function"""
+    if len(sys.argv) != 2:
+        print("Usage: python inframate_flow.py <repository_path>")
+        sys.exit(1)
+    
+    repo_path = os.path.abspath(sys.argv[1])
+    if not os.path.exists(repo_path):
+        print(f"Error: Repository path {repo_path} does not exist")
+        sys.exit(1)
+    
+    # 1. Read inframate.md
+    md_data = read_inframate_md(repo_path)
+    if not md_data:
+        sys.exit(1)
+    
+    # 2. Generate recommendations using Gemini
+    analysis = analyze_with_gemini(md_data)
+    
+    # Print analysis results
+    print("\n== Analysis Results ==")
+    
+    print("\nRecommended AWS Services:")
+    for service in analysis.get("services", []):
+        print(f"- {service}")
+    
+    print("\nDeployment Recommendations:")
+    for rec in analysis.get("recommendations", []):
+        print(f"- {rec}")
+    
+    # 3. Create Terraform files
+    tf_dir = create_terraform_files(repo_path, analysis, md_data)
+    
+    print(f"\nInfrastruture analysis complete! Terraform files created in {tf_dir}")
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main()) 
