@@ -213,64 +213,49 @@ def fallback_analyze(md_data):
         "terraform_template": generate_terraform_template(md_data, services)
     }
 
-def generate_terraform_files(repo_info: Dict[str, Any], analysis_result: Dict[str, Any], output_dir: str) -> None:
-    """Generate Terraform files based on analysis results"""
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
+def generate_terraform_files(repo_path, analysis, md_data):
+    """Create Terraform files in the root directory"""
+    print("Generating Terraform files...")
     
-    # Initialize RAG manager for template retrieval
-    rag_manager = RAGManager()
-    
-    # Load templates from the templates directory
-    templates_dir = Path(__file__).parent / "templates" / "terraform"
-    rag_manager.load_templates(str(templates_dir))
+    # Create terraform directory if it doesn't exist
+    tf_dir = os.path.join(repo_path, 'terraform')
+    os.makedirs(tf_dir, exist_ok=True)
     
     # Generate main.tf
-    main_tf_content = analysis_result.get("terraform_template", "")
-    if not main_tf_content:
-        # Fallback to basic template if no AI-generated template
-        main_tf_content = """provider "aws" {
-  region = var.aws_region
-}
-
-# Add your resources here
-"""
+    terraform_template = ""
+    if "terraform_template" in analysis and analysis["terraform_template"]:
+        terraform_template = analysis["terraform_template"]
+    else:
+        print("No Terraform template in analysis, generating basic template...")
+        # Use local templates based on language/framework
+        terraform_template = generate_terraform_template(md_data, analysis.get("services", []))
     
-    with open(output_path / "main.tf", "w") as f:
-        f.write(main_tf_content)
+    # Create main.tf
+    with open(os.path.join(tf_dir, 'main.tf'), 'w') as f:
+        f.write(terraform_template)
     
-    # Generate variables.tf
-    variables_tf = """variable "aws_region" {
-  description = "AWS region"
-  type        = string
-  default     = "us-east-1"
-}
-
-variable "environment" {
-  description = "Environment name"
-  type        = string
-  default     = "dev"
-}
-"""
-    with open(output_path / "variables.tf", "w") as f:
+    # Create variables.tf
+    variables_tf = generate_variables_tf(md_data)
+    with open(os.path.join(tf_dir, 'variables.tf'), 'w') as f:
         f.write(variables_tf)
     
-    # Generate outputs.tf
-    outputs_tf = """output "environment" {
-  description = "Environment name"
-  value       = var.environment
-}
-"""
-    with open(output_path / "outputs.tf", "w") as f:
+    # Create outputs.tf
+    outputs_tf = generate_outputs_tf(md_data)
+    with open(os.path.join(tf_dir, 'outputs.tf'), 'w') as f:
         f.write(outputs_tf)
     
-    # Generate terraform.tfvars
-    tfvars = {
-        "aws_region": "us-east-1",
-        "environment": "dev"
-    }
-    with open(output_path / "terraform.tfvars", "w") as f:
-        json.dump(tfvars, f, indent=2)
+    # Create terraform.tfvars
+    tfvars = generate_tfvars(md_data)
+    with open(os.path.join(tf_dir, 'terraform.tfvars'), 'w') as f:
+        f.write(tfvars)
+    
+    # Create README.md
+    readme = generate_readme(md_data, analysis)
+    with open(os.path.join(tf_dir, 'README.md'), 'w') as f:
+        f.write(readme)
+    
+    print(f"Terraform files created in {tf_dir}")
+    return tf_dir
 
 def generate_terraform_template(md_data, services):
     """Generate Terraform template based on detected services"""
@@ -644,8 +629,7 @@ def main():
             analysis_result = fallback_analyze(repo_info)
         
         # Generate Terraform files
-        terraform_dir = Path(repo_path) / "terraform"
-        create_terraform_files(repo_path, analysis_result, repo_info)
+        terraform_dir = generate_terraform_files(repo_path, analysis_result, repo_info)
         
         print("Inframate analysis complete!")
         print(f"Terraform files generated in: {terraform_dir}")
