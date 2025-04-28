@@ -23,57 +23,50 @@ GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
 def read_inframate_md(repo_path):
-    """Read and parse the inframate.md file"""
-    inframate_path = os.path.join(repo_path, 'inframate.md')
-    if not os.path.exists(inframate_path):
-        print(f"Error: inframate.md not found in {repo_path}")
-        return None
+    """Read and parse inframate.md file"""
+    md_path = Path(repo_path) / "inframate.md"
+    if not md_path.exists():
+        raise FileNotFoundError("inframate.md not found in repository")
     
-    print(f"Reading inframate.md from {inframate_path}...")
-    with open(inframate_path, 'r') as f:
-        content = f.read()
+    with open(md_path, 'r') as f:
+        return f.read()
+
+def analyze_repository(repo_path):
+    """Analyze repository structure and requirements"""
+    # Read inframate.md
+    requirements = read_inframate_md(repo_path)
     
-    # Simple parser for inframate.md (this could be more sophisticated)
-    result = {
-        "description": "",
-        "language": "",
-        "framework": "",
-        "database": "",
-        "requirements": [],
-        "preferences": []
+    # Get Gemini API key from environment
+    api_key = os.getenv('GEMINI_API_KEY')
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY not set in environment")
+    
+    # Call Gemini API
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+    headers = {'Content-Type': 'application/json'}
+    
+    prompt = f"""
+    Analyze the following application requirements and generate infrastructure recommendations:
+    
+    {requirements}
+    
+    Please provide:
+    1. Recommended AWS services
+    2. Infrastructure architecture
+    3. Terraform configuration
+    """
+    
+    data = {
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }]
     }
     
-    # Extract technical details
-    if "## Technical Details" in content:
-        tech_section = content.split("## Technical Details")[1].split("##")[0].strip()
-        for line in tech_section.split('\n'):
-            if line.startswith('- **Language**:'):
-                result["language"] = line.split(':')[1].strip()
-            elif line.startswith('- **Framework**:'):
-                result["framework"] = line.split(':')[1].strip()
-            elif line.startswith('- **Database**:'):
-                result["database"] = line.split(':')[1].strip()
+    response = requests.post(url, headers=headers, json=data)
+    if response.status_code != 200:
+        raise Exception(f"Gemini API error: {response.text}")
     
-    # Extract requirements
-    if "## Infrastructure Requirements" in content:
-        req_section = content.split("## Infrastructure Requirements")[1].split("##")[0].strip()
-        result["requirements"] = [line.strip()[2:] for line in req_section.split('\n') if line.strip().startswith('-')]
-    
-    # Extract preferences
-    if "## Deployment Preferences" in content:
-        pref_section = content.split("## Deployment Preferences")[1].split("##")[0].strip()
-        result["preferences"] = [line.strip()[2:] for line in pref_section.split('\n') if line.strip().startswith('-')]
-    
-    # Extract general description
-    if "# " in content and "\n" in content:
-        result["description"] = content.split('\n')[0].replace('# ', '').strip()
-        if "\n\n" in content:
-            result["description"] += " " + content.split('\n\n')[1].strip()
-    
-    # Store the full content for AI analysis
-    result["full_content"] = content
-    
-    return result
+    return response.json()
 
 def analyze_with_gemini(md_data):
     """Analyze repository data using Gemini API"""
@@ -733,35 +726,20 @@ def main():
         print("Usage: python inframate_flow.py <repository_path>")
         sys.exit(1)
     
-    repo_path = os.path.abspath(sys.argv[1])
-    if not os.path.exists(repo_path):
-        print(f"Error: Repository path {repo_path} does not exist")
+    repo_path = sys.argv[1]
+    try:
+        # Analyze repository
+        analysis = analyze_repository(repo_path)
+        
+        # Generate Terraform files
+        generate_terraform_files(repo_path, analysis)
+        
+        print("Inframate analysis completed successfully")
+        print("Terraform files generated in terraform/ directory")
+        
+    except Exception as e:
+        print(f"Error: {str(e)}")
         sys.exit(1)
-    
-    # 1. Read inframate.md
-    md_data = read_inframate_md(repo_path)
-    if not md_data:
-        sys.exit(1)
-    
-    # 2. Generate recommendations using Gemini
-    analysis = analyze_with_gemini(md_data)
-    
-    # Print analysis results
-    print("\n== Analysis Results ==")
-    
-    print("\nRecommended AWS Services:")
-    for service in analysis.get("services", []):
-        print(f"- {service}")
-    
-    print("\nDeployment Recommendations:")
-    for rec in analysis.get("recommendations", []):
-        print(f"- {rec}")
-    
-    # 3. Create Terraform files
-    tf_dir = create_terraform_files(repo_path, analysis, md_data)
-    
-    print(f"\nInfrastruture analysis complete! Terraform files created in {tf_dir}")
-    return 0
 
 if __name__ == "__main__":
-    sys.exit(main()) 
+    main() 

@@ -16,7 +16,14 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/yourusername/inframate",
     packages=find_packages(),
-    install_requires=requirements,
+    install_requires=[
+        "requests>=2.31.0",
+        "pathlib>=1.0.1",
+        "boto3>=1.28.41",
+        "pyyaml>=6.0.1",
+        "python-dotenv>=1.0.0",
+        "google-generativeai>=0.3.2"
+    ],
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
