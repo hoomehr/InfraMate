@@ -38,7 +38,7 @@ jobs:
       with:
         repository: ${{ github.event.inputs.target_repo }}
         ref: ${{ github.event.inputs.target_branch }}
-        token: ${{ secrets.REPO_ACCESS_TOKEN }}
+        token: ${{ secrets.GITHUB_TOKEN }}
         path: target_repo
 
     - name: Run Inframate
@@ -57,7 +57,7 @@ jobs:
     - name: Create Pull Request in Target Repository
       uses: peter-evans/create-pull-request@v5
       with:
-        token: ${{ secrets.REPO_ACCESS_TOKEN }}
+        token: ${{ secrets.GITHUB_TOKEN }}
         repository: ${{ github.event.inputs.target_repo }}
         commit-message: "Inframate: Update infrastructure configuration"
         title: "Inframate: Infrastructure Configuration Update"
