@@ -47,6 +47,52 @@ Inframate reads an `inframate.md` file containing details about your application
    - `outputs.tf`: Output declarations
    - `terraform.tfvars`: Default variable values
 
+## Data Flow and Processing
+
+Inframate follows this process when analyzing a repository:
+
+1. **Repository Scan**:
+   - Clones or reads the target repository
+   - Analyzes file types, language distributions, and project structure
+   - Identifies frameworks, databases, and dependencies
+
+2. **Configuration Processing**:
+   - Reads the `inframate.md` file if present
+   - Extracts explicit requirements and preferences
+   - Combines detected repository info with user-provided configuration
+
+3. **Gemini API Interaction**:
+   - Constructs a detailed prompt containing:
+     ```
+     Repository: {repo_name}
+     Branch: {branch_name}
+     Languages: {detected_languages}
+     Frameworks: {detected_frameworks}
+     Requirements: {requirements_from_md}
+     
+     Please analyze this repository and recommend AWS infrastructure:
+     1. Suggest appropriate AWS services
+     2. Generate Terraform code for these services
+     3. Explain the architecture choices
+     ```
+   - Sends this prompt to the Gemini API
+   - Receives a structured response with recommendations and Terraform code
+
+4. **Template Selection and Customization**:
+   - Based on the analysis, selects the best matching template (microservices, serverless, kubernetes)
+   - Customizes the template with project-specific configurations
+   - Integrates AI recommendations to create tailored infrastructure
+
+5. **Output Generation**:
+   - Creates Terraform files in a `/terraform` directory
+   - Generates a README explaining the architecture
+   - Provides deployment instructions
+
+6. **Fallback Mechanism**:
+   - If the Gemini API is unavailable, uses rule-based analysis
+   - Maps detected languages and frameworks to appropriate templates
+   - Provides basic configurations without AI customization
+
 ## Using Inframate
 
 ### As a GitHub Action
@@ -105,21 +151,72 @@ Inframate includes a set of pre-built Terraform templates for common application
 
 These templates are used as a starting point and enhanced with AI recommendations.
 
-## Example
+## Example Output
 
-For a Node.js Express API with MongoDB, Inframate will generate:
-- Lambda function for the Express.js API
-- API Gateway configuration
-- Auto-scaling policies
-- IAM roles and permissions
-- CloudWatch logging
-- MongoDB Atlas connection (or DocumentDB)
+For a repository analysis, Inframate will print:
+```
+Analyzing repository: my-nodejs-app
+Detected languages: JavaScript (85%), HTML (10%), CSS (5%)
+Frameworks: Express.js, React
+Database requirements: MongoDB (from package.json)
+Additional requirements from inframate.md: High availability, Auto-scaling
+
+Generating infrastructure recommendations...
+Selected template: serverless.tf
+Customizing for detected requirements...
+
+Generated files:
+- terraform/main.tf
+- terraform/variables.tf
+- terraform/outputs.tf
+- terraform/terraform.tfvars
+- terraform/README.md
+
+Infrastructure summary:
+- API Gateway + Lambda for backend API
+- S3 + CloudFront for frontend
+- DynamoDB for data storage
+- IAM roles and policies
+```
 
 ## Requirements
 
 - Python 3.8+
 - [Google Gemini API key](https://ai.google.dev/)
 - Terraform (for deployment)
+
+## Gemini API Integration Details
+
+Inframate uses the Google Gemini API with this format:
+
+```python
+headers = {
+    "Content-Type": "application/json"
+}
+
+data = {
+    "contents": [{
+        "parts": [{
+            "text": prompt
+        }]
+    }]
+}
+
+response = requests.post(
+    f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}",
+    headers=headers,
+    json=data
+)
+
+if response.status_code == 200:
+    result = response.json()
+    content = result["candidates"][0]["content"]["parts"][0]["text"]
+    # Process the generated content
+    return content
+else:
+    # Fall back to rule-based analysis
+    return fallback_analyze(repo_info)
+```
 
 ## Next Steps
 
