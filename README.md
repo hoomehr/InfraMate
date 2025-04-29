@@ -8,18 +8,40 @@ Inframate reads an `inframate.md` file containing details about your application
 
 ## How It Works
 
-1. **Repository Analysis**: Inframate reads the `inframate.md` file in your repository to understand:
-   - Application language and framework
+1. **Repository Analysis**: Inframate automatically analyzes your repository to understand:
+   - Programming languages used
+   - Frameworks and libraries
    - Database requirements
-   - Infrastructure requirements
-   - Deployment preferences
+   - Directory structure and dependencies
 
-2. **AI-Powered Recommendations**: Using the Google Gemini API, Inframate generates:
+2. **Inframate Configuration**: You can provide an optional `inframate.md` file in your repository with:
+   ```markdown
+   # Inframate Configuration
+
+   ## Description
+   Your application description
+
+   ## Language
+   Detected automatically
+
+   ## Framework
+   Detected automatically
+
+   ## Database
+   MySQL
+
+   ## Requirements
+   - High availability
+   - Auto-scaling
+   - Cost-effective deployment
+   ```
+
+3. **AI-Powered Recommendations**: Using the Google Gemini API, Inframate generates:
    - Recommended AWS services for your application
    - Infrastructure recommendations based on application requirements
    - Complete Terraform templates for deployment
 
-3. **Terraform Generation**: Inframate creates a complete set of Terraform files:
+4. **Terraform Generation**: Inframate creates a complete set of Terraform files:
    - `main.tf`: Primary infrastructure definition
    - `variables.tf`: Variable definitions
    - `outputs.tf`: Output declarations
@@ -27,53 +49,84 @@ Inframate reads an `inframate.md` file containing details about your application
 
 ## Using Inframate
 
-### Prerequisites
+### As a GitHub Action
 
-- Python 3.7+
-- [Google Gemini API key](https://ai.google.dev/)
-- Terraform (for deployment)
+The easiest way to use Inframate is as a GitHub Action:
 
-### Installation
+1. Create a repository that will use Inframate
+2. Add an `inframate.md` file (optional)
+3. Set up a GitHub Actions workflow to run Inframate:
+   ```yaml
+   name: Inframate
 
-```bash
-pip install -r requirements.txt
-```
+   on:
+     push:
+       branches: [ main ]
 
-### Usage
+   jobs:
+     analyze:
+       runs-on: ubuntu-latest
+       steps:
+         - name: Checkout repository
+           uses: actions/checkout@v4
 
-1. Create an `inframate.md` file in your repository with details about your application.
+         - name: Run Inframate
+           uses: yourusername/inframate@main
+           with:
+             gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+   ```
 
-2. Set your Gemini API key:
-```bash
-export GEMINI_API_KEY="your_gemini_api_key_here"
-```
+### Local Usage
 
-3. Run Inframate:
-```bash
-python inframate_flow.py /path/to/your/repo
-```
+You can also run Inframate locally:
 
-4. Deploy using the generated Terraform files:
-```bash
-cd /path/to/your/repo/terraform
-terraform init
-terraform plan
-terraform apply
-```
+1. Clone this repository
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Set your Gemini API key:
+   ```bash
+   export GEMINI_API_KEY="your_gemini_api_key_here"
+   ```
+4. Run Inframate:
+   ```bash
+   python inframate_flow.py /path/to/your/repo
+   ```
 
-## Example: JSON API Application
+## Templates
 
-We created a sample JSON API application:
-- Node.js with Express.js backend
-- MongoDB database
-- Serverless AWS architecture using Lambda and API Gateway
+Inframate includes a set of pre-built Terraform templates for common application patterns:
 
-The generated Terraform template includes:
+- **Node.js Lambda**: Serverless applications using Lambda and API Gateway
+- **Web Applications**: Frontend (S3+CloudFront) and backend (EC2/ECS)
+- **Database Resources**: RDS, DynamoDB, and ElastiCache
+- **Microservices**: ECS/EKS deployments for containerized applications
+
+These templates are used as a starting point and enhanced with AI recommendations.
+
+## Example
+
+For a Node.js Express API with MongoDB, Inframate will generate:
 - Lambda function for the Express.js API
 - API Gateway configuration
 - Auto-scaling policies
 - IAM roles and permissions
 - CloudWatch logging
+- MongoDB Atlas connection (or DocumentDB)
+
+## Requirements
+
+- Python 3.8+
+- [Google Gemini API key](https://ai.google.dev/)
+- Terraform (for deployment)
+
+## Next Steps
+
+- Add support for more cloud providers (Azure, GCP)
+- Enhance repository analysis with language-specific parsers
+- Add deployment automation
+- Create a web interface for easier use
 
 ## Inframate Components
 
