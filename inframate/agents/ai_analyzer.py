@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from inframate.utils.rag import RAGManager
 import requests
 from pathlib import Path
+from typing import Dict, Any, List, Optional
 
 # Load environment variables
 load_dotenv()
@@ -19,155 +20,291 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 # Initialize RAG manager
 rag_manager = RAGManager()
 
-def analyze_with_ai(repo_info):
-    """Analyze repository information using AI"""
-    api_key = os.getenv('GEMINI_API_KEY')
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY not set in environment")
-    
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-    headers = {'Content-Type': 'application/json'}
-    
-    prompt = f"""
-    Analyze the following repository information and generate infrastructure recommendations:
-    
-    Repository: {repo_info['name']}
-    Branch: {repo_info['branch']}
-    Languages: {', '.join(repo_info['languages'])}
-    
-    Requirements:
-    {repo_info['requirements']}
-    
-    Please provide:
-    1. Recommended AWS services
-    2. Infrastructure architecture
-    3. Terraform configuration
+def analyze_directory_structure(repo_path: str) -> Dict[str, Any]:
     """
-    
-    data = {
-        "contents": [{
-            "parts": [{"text": prompt}]
-        }]
-    }
-    
-    response = requests.post(url, headers=headers, json=data)
-    if response.status_code != 200:
-        raise Exception(f"Gemini API error: {response.text}")
-    
-    return response.json()
-
-def create_analysis_prompt(repo_path, data):
-    """
-    Create a prompt for the AI based on repository data
+    Analyze the directory structure of the repository
     
     Args:
-        repo_path (str): Path to the repository
-        data (dict): Repository analysis data
+        repo_path: Path to the repository
         
     Returns:
-        str: Prompt for AI analysis
+        Dictionary containing information about the directory structure
     """
+    repo_dir = Path(repo_path)
+    
+    # Count files by extension
+    file_extensions = {}
+    file_count = 0
+    dir_count = 0
+    
+    for root, dirs, files in os.walk(repo_dir):
+        # Skip .git and other hidden directories
+        dirs[:] = [d for d in dirs if not d.startswith('.')]
+        
+        rel_path = os.path.relpath(root, repo_path)
+        if rel_path == '.':
+            rel_path = ''
+        
+        for file in files:
+            if file.startswith('.'):
+                continue
+                
+            file_count += 1
+            _, ext = os.path.splitext(file)
+            if ext:
+                ext = ext.lower()
+                file_extensions[ext] = file_extensions.get(ext, 0) + 1
+        
+        dir_count += len(dirs)
+    
+    # Get top directories
+    top_dirs = []
+    for item in os.listdir(repo_dir):
+        item_path = repo_dir / item
+        if item_path.is_dir() and not item.startswith('.'):
+            top_dirs.append(item)
+    
+    # Check for common project files
+    has_docker = os.path.exists(repo_dir / 'Dockerfile') or os.path.exists(repo_dir / 'docker-compose.yml')
+    has_kubernetes = any(os.path.exists(repo_dir / item) for item in ['k8s', 'kubernetes', 'helm'])
+    has_ci = any(os.path.exists(repo_dir / item) for item in ['.github', '.gitlab-ci.yml', '.circleci'])
+    
+    return {
+        'file_count': file_count,
+        'dir_count': dir_count,
+        'file_extensions': file_extensions,
+        'top_directories': top_dirs,
+        'has_docker': has_docker,
+        'has_kubernetes': has_kubernetes,
+        'has_ci': has_ci
+    }
+
+def analyze_with_ai(repo_info: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Analyze repository info using Gemini API
+    
+    Args:
+        repo_info: Dictionary containing information about the repository
+        
+    Returns:
+        Dictionary containing analysis results
+    """
+    # Get Gemini API key from environment
+    api_key = os.getenv('GEMINI_API_KEY')
+    if not api_key:
+        print("Warning: GEMINI_API_KEY not set. Using fallback analysis.")
+        return fallback_analyze(repo_info)
+    
+    # Add directory structure analysis if it's not already there
+    if 'directory_structure' not in repo_info and 'repo_path' in repo_info:
+        try:
+            repo_info['directory_structure'] = analyze_directory_structure(repo_info['repo_path'])
+        except Exception as e:
+            print(f"Warning: Failed to analyze directory structure: {e}")
+    
+    # Build the prompt for Gemini API
+    language = repo_info.get('language', 'Unknown')
+    framework = repo_info.get('framework', 'Unknown')
+    database = repo_info.get('database', 'None')
+    requirements = repo_info.get('requirements', '')
+    description = repo_info.get('description', '')
+    
+    dir_structure = "Not available"
+    if 'directory_structure' in repo_info:
+        dir_structure = json.dumps(repo_info['directory_structure'], indent=2)
+    
     prompt = f"""
-Please analyze this repository for AWS deployment requirements:
+You are an expert DevOps engineer. Analyze the following application and provide infrastructure recommendations and Terraform configuration.
 
-Repository Path: {repo_path}
+APPLICATION DETAILS:
+- Language: {language}
+- Framework: {framework}
+- Database: {database}
+- Requirements: {requirements}
+- Description: {description}
 
+DIRECTORY STRUCTURE:
+{dir_structure}
+
+Based on this information, please provide:
+1. A list of recommended AWS services for deployment (comma-separated)
+2. Infrastructure recommendations (bullet points)
+3. A complete Terraform template for deploying this application to AWS
+
+Format your response with clear sections:
+RECOMMENDED_SERVICES: (comma-separated list of AWS services)
+RECOMMENDATIONS: (bullet points for infrastructure recommendations)
+TERRAFORM_TEMPLATE: (complete, production-ready Terraform code)
 """
     
-    # Add readme content if available
-    if data.get("readme"):
-        # Truncate readme if it's too long
-        readme = data["readme"][:4000] + "..." if len(data["readme"]) > 4000 else data["readme"]
-        prompt += f"README.md excerpt:\n{readme}\n\n"
+    try:
+        # Call Gemini API
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+        headers = {"Content-Type": "application/json"}
+        data = {
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }]
+        }
+        
+        response = requests.post(url, headers=headers, json=data)
+        if response.status_code != 200:
+            print(f"Warning: Gemini API request failed with status {response.status_code}")
+            return fallback_analyze(repo_info)
+        
+        response_data = response.json()
+        
+        # Extract the text from the response
+        ai_response = response_data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+        
+        # Parse the response to extract the services, recommendations, and Terraform template
+        services = []
+        recommendations = []
+        terraform_template = ""
+        
+        if "RECOMMENDED_SERVICES:" in ai_response:
+            services_section = ai_response.split("RECOMMENDED_SERVICES:")[1].split("RECOMMENDATIONS:")[0].strip()
+            services = [service.strip() for service in services_section.split(",")]
+        
+        if "RECOMMENDATIONS:" in ai_response:
+            recommendations_section = ai_response.split("RECOMMENDATIONS:")[1].split("TERRAFORM_TEMPLATE:")[0].strip()
+            recommendations = [rec.strip().lstrip("- ") for rec in recommendations_section.split("\n") if rec.strip()]
+        
+        if "TERRAFORM_TEMPLATE:" in ai_response:
+            template_section = ai_response.split("TERRAFORM_TEMPLATE:")[1].strip()
+            # Check if the template is in a code block
+            if "```" in template_section:
+                # Extract the template from within the code block
+                parts = template_section.split("```")
+                if len(parts) >= 3:  # There should be at least 3 parts: before, content, after
+                    terraform_template = parts[1].strip()
+                    if terraform_template.startswith("terraform") or terraform_template.startswith("hcl"):
+                        terraform_template = terraform_template.split("\n", 1)[1]  # Remove the language identifier
+            else:
+                # Just use the raw template
+                terraform_template = template_section
+        
+        return {
+            "services": services,
+            "recommendations": recommendations,
+            "terraform_template": terraform_template,
+            "ai_response": ai_response  # Store the full response for the README
+        }
     
-    # Add framework information
-    if data.get("framework"):
-        framework = data["framework"]
-        prompt += "Detected frameworks:\n"
-        prompt += f"- Language: {framework.get('language') or 'Unknown'}\n"
-        
-        if framework.get("frontend"):
-            prompt += f"- Frontend: {framework['frontend']}\n"
-        if framework.get("backend"):
-            prompt += f"- Backend: {framework['backend']}\n"
-        if framework.get("database"):
-            prompt += f"- Database: {framework['database']}\n"
-        if framework.get("other"):
-            prompt += f"- Other: {', '.join(framework['other'])}\n"
-        prompt += "\n"
-    
-    # Add infrastructure information
-    if data.get("infrastructure"):
-        infra = data["infrastructure"]
-        prompt += "Detected infrastructure:\n"
-        
-        if infra["type"]:
-            prompt += f"- Type: {infra['type']}\n"
-        
-        # Add cloud provider information
-        for provider in ["aws", "azure", "gcp"]:
-            if infra[provider]["detected"]:
-                services = infra[provider]["services"]
-                services_str = ", ".join(services) if services else "Unknown"
-                prompt += f"- {provider.upper()}: Detected with services: {services_str}\n"
-        
-        # Add other infrastructure information
-        infra_types = []
-        if infra["cloudformation"]:
-            infra_types.append("CloudFormation")
-        if infra["terraform"]:
-            infra_types.append("Terraform")
-        if infra["kubernetes"]:
-            infra_types.append("Kubernetes")
-        if infra["docker"]:
-            infra_types.append("Docker")
-        
-        if infra_types:
-            prompt += f"- Infrastructure tools: {', '.join(infra_types)}\n"
-        
-        prompt += "\n"
-    
-    # Add Inframate configuration if available
-    if data.get("config") and data["config"]:
-        prompt += f"Inframate configuration:\n{yaml.dump(data['config'])}\n\n"
-    
-    prompt += """
-Based on this information, please provide a detailed analysis with the following:
+    except Exception as e:
+        print(f"Warning: Failed to analyze with Gemini API: {e}")
+        return fallback_analyze(repo_info)
 
-1. Detected programming languages
-2. AWS services that would be needed for deployment
-3. Specific deployment recommendations and infrastructure needed
-4. A complete Terraform template for deploying the required AWS infrastructure
-5. Estimated monthly cost
-6. Any warnings or potential issues
-
-The Terraform template should be complete and ready to use, with all necessary resources, variables, outputs, and providers. 
-Put the terraform code inside ```terraform and ``` tags.
-
-Return your analysis as a JSON object with these keys:
-languages, services, recommendations, terraform_template, estimatedCost, warnings
+def fallback_analyze(repo_info: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Fallback analysis when AI analysis fails
+    
+    Args:
+        repo_info: Dictionary containing information about the repository
+        
+    Returns:
+        Dictionary containing analysis results
+    """
+    services = []
+    recommendations = []
+    
+    # Determine services based on language and framework
+    language = repo_info.get('language', '').lower()
+    framework = repo_info.get('framework', '').lower()
+    database = repo_info.get('database', '').lower()
+    
+    # Analyze for Node.js
+    if 'node' in language or 'javascript' in language or 'typescript' in language:
+        services.extend(["Lambda", "API Gateway", "CloudWatch"])
+        recommendations.append("Use serverless architecture with Lambda and API Gateway for Node.js applications")
+        
+        if 'express' in framework:
+            services.append("Lambda")
+            recommendations.append("Consider using AWS Lambda with Express.js adapter")
+        
+        if 'react' in framework or 'vue' in framework or 'angular' in framework:
+            services.extend(["S3", "CloudFront"])
+            recommendations.append("Host frontend on S3 with CloudFront for global CDN")
+    
+    # Analyze for Python
+    elif 'python' in language:
+        services.extend(["Lambda", "API Gateway", "CloudWatch"])
+        recommendations.append("Use AWS Lambda for Python applications")
+        
+        if 'django' in framework or 'flask' in framework:
+            services.extend(["Elastic Beanstalk", "RDS"])
+            recommendations.append("Consider Elastic Beanstalk for Django or Flask applications")
+    
+    # Analyze for Java
+    elif 'java' in language:
+        services.extend(["EC2", "Auto Scaling", "Elastic Load Balancer"])
+        recommendations.append("Use EC2 with Auto Scaling for Java applications")
+        
+        if 'spring' in framework:
+            services.extend(["Elastic Beanstalk", "RDS"])
+            recommendations.append("Consider Elastic Beanstalk for Spring applications")
+    
+    # Database recommendations
+    if 'mongodb' in database:
+        services.append("DocumentDB")
+        recommendations.append("Use Amazon DocumentDB for MongoDB compatibility")
+    elif 'mysql' in database or 'postgresql' in database:
+        services.append("RDS")
+        recommendations.append("Use Amazon RDS for relational database needs")
+    
+    # Add generic recommendations
+    recommendations.extend([
+        "Use Infrastructure as Code (IaC) with Terraform for reproducible deployments",
+        "Implement proper logging and monitoring with CloudWatch",
+        "Set up proper IAM roles and policies for security"
+    ])
+    
+    # Generate a terraform template
+    terraform_template = generate_terraform_template(repo_info, services)
+    
+    # Add the fallback information for the README
+    fallback_note = """
+NOTE: This analysis was performed using Inframate's built-in rules since the AI analysis was unavailable.
+For more accurate and detailed recommendations, please ensure the GEMINI_API_KEY is properly configured.
 """
     
-    return prompt
+    return {
+        "services": list(set(services)),  # Remove duplicates
+        "recommendations": recommendations,
+        "terraform_template": terraform_template,
+        "ai_response": fallback_note  # Add note for README
+    }
 
-def generate_terraform_template(repo_info, services):
-    """Generate basic Terraform template based on services"""
-    template = """provider "aws" {
+def generate_terraform_template(repo_info: Dict[str, Any], services: List[str]) -> str:
+    """
+    Generate a basic Terraform template based on detected services
+    
+    Args:
+        repo_info: Repository information
+        services: List of detected services
+        
+    Returns:
+        String containing Terraform template
+    """
+    template = """# Terraform configuration generated by Inframate
+provider "aws" {
   region = var.region
 }
 
 """
     
+    # Add resources based on services
     if "Lambda" in services:
-        template += """resource "aws_lambda_function" "api" {
+        template += """
+resource "aws_lambda_function" "app" {
   function_name    = "${var.app_name}-${var.environment}"
   handler          = "index.handler"
   runtime          = "nodejs18.x"
-  filename         = "${path.module}/lambda.zip"
-  source_code_hash = filebase64sha256("${path.module}/lambda.zip")
+  filename         = "${path.module}/deployment.zip"
+  source_code_hash = filebase64sha256("${path.module}/deployment.zip")
   role             = aws_iam_role.lambda_role.arn
-  timeout          = var.lambda_timeout
-  memory_size      = var.lambda_memory_size
+  memory_size      = 512
+  timeout          = 30
   
   environment {
     variables = {
@@ -177,7 +314,7 @@ def generate_terraform_template(repo_info, services):
 }
 
 resource "aws_iam_role" "lambda_role" {
-  name = "${var.app_name}-${var.environment}-lambda-role"
+  name = "${var.app_name}-lambda-role"
   
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -193,278 +330,63 @@ resource "aws_iam_role" "lambda_role" {
   })
 }
 
+resource "aws_iam_role_policy_attachment" "lambda_basic" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
 """
     
     if "API Gateway" in services:
-        template += """resource "aws_api_gateway_rest_api" "api" {
-  name        = "${var.app_name}-${var.environment}-api"
-  description = "API Gateway for ${var.app_name}"
+        template += """
+resource "aws_api_gateway_rest_api" "api" {
+  name        = "${var.app_name}-api"
+  description = "API for ${var.app_name}"
+}
+
+resource "aws_api_gateway_resource" "proxy" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_rest_api.api.root_resource_id
+  path_part   = "{proxy+}"
+}
+
+resource "aws_api_gateway_method" "proxy" {
+  rest_api_id   = aws_api_gateway_rest_api.api.id
+  resource_id   = aws_api_gateway_resource.proxy.id
+  http_method   = "ANY"
+  authorization_type = "NONE"
+}
+
+resource "aws_api_gateway_integration" "lambda" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  resource_id = aws_api_gateway_resource.proxy.id
+  http_method = aws_api_gateway_method.proxy.http_method
+  
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = aws_lambda_function.app.invoke_arn
 }
 
 resource "aws_api_gateway_deployment" "api" {
+  depends_on = [
+    aws_api_gateway_integration.lambda
+  ]
+  
   rest_api_id = aws_api_gateway_rest_api.api.id
   stage_name  = var.environment
 }
 
-"""
-    
-    if "CloudFront" in services:
-        template += """resource "aws_cloudfront_distribution" "cdn" {
-  enabled = true
+resource "aws_lambda_permission" "api_gateway" {
+  statement_id  = "AllowAPIGatewayInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.app.function_name
+  principal     = "apigateway.amazonaws.com"
   
-  origin {
-    domain_name = aws_api_gateway_deployment.api.invoke_url
-    origin_id   = "api-gateway"
-    
-    custom_origin_config {
-      http_port              = 80
-      https_port             = 443
-      origin_protocol_policy = "https-only"
-      origin_ssl_protocols   = ["TLSv1.2"]
-    }
-  }
-  
-  default_cache_behavior {
-    allowed_methods  = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
-    cached_methods   = ["GET", "HEAD"]
-    target_origin_id = "api-gateway"
-    
-    forwarded_values {
-      query_string = true
-      
-      cookies {
-        forward = "all"
-      }
-    }
-    
-    viewer_protocol_policy = "redirect-to-https"
-    min_ttl                = 0
-    default_ttl            = 3600
-    max_ttl                = 86400
-  }
-  
-  restrictions {
-    geo_restriction {
-      restriction_type = "none"
-    }
-  }
-  
-  viewer_certificate {
-    cloudfront_default_certificate = true
-  }
-}
-
-"""
-    
-    return template
-
-def extract_terraform_template(text):
-    """Extract Terraform template from AI response text"""
-    # Look for Terraform code blocks
-    if "```terraform" in text and "```" in text:
-        start = text.find("```terraform") + len("```terraform")
-        end = text.find("```", start)
-        if end > start:
-            return text[start:end].strip()
-    
-    # Look for HCL code blocks
-    if "```hcl" in text and "```" in text:
-        start = text.find("```hcl") + len("```hcl")
-        end = text.find("```", start)
-        if end > start:
-            return text[start:end].strip()
-    
-    # Look for generic code blocks that might contain Terraform
-    if "```" in text:
-        parts = text.split("```")
-        for i in range(1, len(parts), 2):
-            if "provider" in parts[i] and "aws" in parts[i] and "resource" in parts[i]:
-                return parts[i].strip()
-    
-    # If we can't find a code block, look for sections that might contain Terraform code
-    if "provider \"aws\"" in text:
-        # Try to extract a block of text that looks like Terraform
-        lines = text.split("\n")
-        start_idx = -1
-        end_idx = -1
-        
-        for i, line in enumerate(lines):
-            if "provider \"aws\"" in line and start_idx == -1:
-                start_idx = i
-            if start_idx != -1 and end_idx == -1 and line.strip() == "}" and i > start_idx + 5:
-                # Look ahead to see if this is the end of the Terraform code
-                if i + 1 < len(lines) and (lines[i+1].strip() == "" or not lines[i+1].strip().startswith("#")):
-                    end_idx = i
-        
-        if start_idx != -1 and end_idx != -1:
-            return "\n".join(lines[start_idx:end_idx+1])
-    
-    return ""
-
-def extract_languages(text):
-    """Extract programming languages from AI response text"""
-    common_languages = ["javascript", "python", "java", "ruby", "go", "rust", 
-                       "typescript", "php", "c#", "c++", "html", "css", 
-                       "shell", "bash", "node.js", "nodejs"]
-    
-    languages = []
-    for lang in common_languages:
-        if lang.lower() in text.lower():
-            # Normalize Node.js variants
-            if lang.lower() in ["node.js", "nodejs"]:
-                if "Node.js" not in languages and "NodeJS" not in languages:
-                    languages.append("Node.js")
-            else:
-                # Capitalize properly
-                if lang.lower() == "javascript":
-                    languages.append("JavaScript")
-                elif lang.lower() == "typescript":
-                    languages.append("TypeScript")
-                elif lang.lower() == "c#":
-                    languages.append("C#")
-                elif lang.lower() == "c++":
-                    languages.append("C++")
-                elif lang.lower() == "php":
-                    languages.append("PHP")
-                elif lang.lower() == "html":
-                    languages.append("HTML")
-                elif lang.lower() == "css":
-                    languages.append("CSS")
-                else:
-                    languages.append(lang.capitalize())
-    
-    return languages
-
-def extract_services(text):
-    """Extract AWS services from AI response text"""
-    common_aws_services = [
-        "EC2", "Lambda", "S3", "DynamoDB", "RDS", "API Gateway", 
-        "CloudFront", "Route 53", "SQS", "SNS", "ECS", "EKS", 
-        "Fargate", "CloudFormation", "ElastiCache", "CodeBuild",
-        "CodePipeline", "Amplify", "AppSync", "Cognito"
-    ]
-    
-    services = []
-    for service in common_aws_services:
-        service_variations = [
-            service, 
-            service.lower(), 
-            service.replace(" ", ""),
-            service.lower().replace(" ", "")
-        ]
-        
-        for variation in service_variations:
-            if variation in text:
-                if service not in services:
-                    services.append(service)
-                break
-    
-    return services
-
-def extract_recommendations(text):
-    """Extract deployment recommendations from AI response text"""
-    # Split text into paragraphs and lines
-    paragraphs = text.split("\n\n")
-    lines = text.split("\n")
-    
-    recommendations = []
-    
-    # Look for lists or paragraphs containing recommendations
-    for item in lines:
-        item = item.strip()
-        if item.startswith("- ") or item.startswith("* "):
-            # Extract list items
-            recommendation = item[2:].strip()
-            if len(recommendation) > 10 and recommendation not in recommendations:
-                recommendations.append(recommendation)
-    
-    # If we couldn't find specific recommendations, extract sentences containing key phrases
-    if not recommendations:
-        recommendation_phrases = [
-            "recommend", "suggest", "deploy", "should use", "could use", 
-            "best practice", "optimal", "ideal", "consider"
-        ]
-        
-        for paragraph in paragraphs:
-            for phrase in recommendation_phrases:
-                if phrase in paragraph.lower():
-                    # Add the entire paragraph as a recommendation
-                    if paragraph.strip() not in recommendations and len(paragraph.strip()) > 10:
-                        recommendations.append(paragraph.strip())
-                        break
-    
-    # Limit to 5 recommendations maximum
-    return recommendations[:5]
-
-def fallback_analyze(repo_info):
-    """Fallback analysis when AI is not available"""
-    # Basic analysis based on detected languages
-    services = []
-    recommendations = []
-    
-    if "Python" in repo_info["languages"]:
-        services.extend(["Lambda", "API Gateway"])
-        recommendations.append("Consider using AWS Lambda for Python application")
-    
-    if "JavaScript" in repo_info["languages"] or "TypeScript" in repo_info["languages"]:
-        services.extend(["Lambda", "API Gateway", "CloudFront"])
-        recommendations.append("Consider using AWS Lambda with Node.js runtime")
-    
-    if "Java" in repo_info["languages"]:
-        services.extend(["ECS", "Fargate", "Application Load Balancer"])
-        recommendations.append("Consider using ECS Fargate for Java application")
-    
-    return {
-        "services": list(set(services)),
-        "recommendations": recommendations,
-        "terraform_template": generate_terraform_template(repo_info, services)
-    }
-
-def generate_fallback_terraform_template(services, language, framework):
-    """
-    Generate a basic Terraform template based on detected services
-    
-    Args:
-        services (list): Detected AWS services
-        language (str): Programming language
-        framework (dict): Framework information
-        
-    Returns:
-        str: Basic Terraform template
-    """
-    template = """# Basic AWS Infrastructure Terraform Template
-# Generated by Inframate (without AI assistance)
-
-provider "aws" {
-  region = var.region
-}
-
-variable "region" {
-  description = "AWS region to deploy to"
-  type        = string
-  default     = "us-east-1"
-}
-
-variable "app_name" {
-  description = "Name of the application"
-  type        = string
-  default     = "app"
-}
-
-variable "environment" {
-  description = "Deployment environment"
-  type        = string
-  default     = "dev"
+  source_arn = "${aws_api_gateway_rest_api.api.execution_arn}/*/*"
 }
 """
     
-    # Add resources based on detected services
-    resources_added = []
-    
-    if "S3" in services and framework.get("frontend"):
-        # Add S3 static website hosting for frontend
+    if "S3" in services:
         template += """
-# S3 bucket for frontend hosting
 resource "aws_s3_bucket" "frontend" {
   bucket = "${var.app_name}-${var.environment}-frontend"
   
@@ -474,89 +396,62 @@ resource "aws_s3_bucket" "frontend" {
   }
 }
 
-resource "aws_s3_bucket_website_configuration" "frontend_website" {
+resource "aws_s3_bucket_website_configuration" "frontend" {
   bucket = aws_s3_bucket.frontend.id
-
+  
   index_document {
     suffix = "index.html"
   }
-
+  
   error_document {
     key = "error.html"
   }
 }
 
-resource "aws_s3_bucket_ownership_controls" "frontend_ownership" {
+resource "aws_s3_bucket_policy" "frontend" {
   bucket = aws_s3_bucket.frontend.id
-
-  rule {
-    object_ownership = "BucketOwnerPreferred"
-  }
-}
-
-resource "aws_s3_bucket_public_access_block" "frontend_public_access" {
-  bucket = aws_s3_bucket.frontend.id
-
-  block_public_acls       = false
-  block_public_policy     = false
-  ignore_public_acls      = false
-  restrict_public_buckets = false
-}
-
-resource "aws_s3_bucket_acl" "frontend_acl" {
-  depends_on = [
-    aws_s3_bucket_ownership_controls.frontend_ownership,
-    aws_s3_bucket_public_access_block.frontend_public_access,
-  ]
-
-  bucket = aws_s3_bucket.frontend.id
-  acl    = "public-read"
-}
-
-resource "aws_s3_bucket_policy" "frontend_policy" {
-  bucket = aws_s3_bucket.frontend.id
+  
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid       = "PublicReadGetObject"
+        Action    = ["s3:GetObject"]
         Effect    = "Allow"
-        Principal = "*"
-        Action    = "s3:GetObject"
         Resource  = "${aws_s3_bucket.frontend.arn}/*"
+        Principal = "*"
       }
     ]
   })
 }
-
-output "frontend_website_endpoint" {
-  value = aws_s3_bucket_website_configuration.frontend_website.website_endpoint
-}
 """
-        resources_added.append("S3")
     
-    if "CloudFront" in services and "S3" in resources_added:
-        # Add CloudFront distribution for S3
+    if "CloudFront" in services:
         template += """
-# CloudFront distribution for the frontend
-resource "aws_cloudfront_distribution" "frontend_distribution" {
+resource "aws_cloudfront_distribution" "frontend" {
   origin {
-    domain_name = aws_s3_bucket.frontend.bucket_regional_domain_name
-    origin_id   = aws_s3_bucket.frontend.id
+    domain_name = aws_s3_bucket_website_configuration.frontend.website_endpoint
+    origin_id   = "S3-${aws_s3_bucket.frontend.bucket}"
+    
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "http-only"
+      origin_ssl_protocols   = ["TLSv1", "TLSv1.1", "TLSv1.2"]
+    }
   }
   
   enabled             = true
   is_ipv6_enabled     = true
   default_root_object = "index.html"
-  price_class         = "PriceClass_100"
   
   default_cache_behavior {
-    allowed_methods  = ["GET", "HEAD"]
+    allowed_methods  = ["GET", "HEAD", "OPTIONS"]
     cached_methods   = ["GET", "HEAD"]
-    target_origin_id = aws_s3_bucket.frontend.id
+    target_origin_id = "S3-${aws_s3_bucket.frontend.bucket}"
     
     forwarded_values {
       query_string = false
+      
       cookies {
         forward = "none"
       }
@@ -577,172 +472,91 @@ resource "aws_cloudfront_distribution" "frontend_distribution" {
   viewer_certificate {
     cloudfront_default_certificate = true
   }
-  
-  tags = {
-    Name        = "${var.app_name}-distribution"
-    Environment = var.environment
-  }
-}
-
-output "cloudfront_domain_name" {
-  value = aws_cloudfront_distribution.frontend_distribution.domain_name
 }
 """
-        resources_added.append("CloudFront")
-    
-    if "Lambda" in services and (language == "Python" or language == "JavaScript/Node.js"):
-        # Add Lambda function
-        runtime = "python3.9" if language == "Python" else "nodejs18.x"
-        handler = "index.handler" if language == "Python" else "index.handler"
-        
-        template += f"""
-# Lambda function for backend
-resource "aws_lambda_function" "backend" {{
-  function_name    = "${{var.app_name}}-${{var.environment}}-backend"
-  handler          = "{handler}"
-  runtime          = "{runtime}"
-  filename         = "lambda.zip"  # You'll need to create this deployment package
-  source_code_hash = filebase64sha256("lambda.zip")
-  
-  role = aws_iam_role.lambda_role.arn
-  
-  environment {{
-    variables = {{
-      ENVIRONMENT = var.environment
-    }}
-  }}
-  
-  tags = {{
-    Name        = "${{var.app_name}}-backend"
-    Environment = var.environment
-  }}
-}}
-
-# IAM role for Lambda
-resource "aws_iam_role" "lambda_role" {{
-  name = "${{var.app_name}}-${{var.environment}}-lambda-role"
-  
-  assume_role_policy = jsonencode({{
-    Version = "2012-10-17"
-    Statement = [
-      {{
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {{
-          Service = "lambda.amazonaws.com"
-        }}
-      }}
-    ]
-  }})
-}}
-
-# Basic execution policy for Lambda
-resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {{
-  role       = aws_iam_role.lambda_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}}
-
-output "lambda_function_name" {{
-  value = aws_lambda_function.backend.function_name
-}}
-
-output "lambda_function_arn" {{
-  value = aws_lambda_function.backend.arn
-}}
-"""
-        resources_added.append("Lambda")
-    
-    if "API Gateway" in services and "Lambda" in resources_added:
-        # Add API Gateway
-        template += """
-# API Gateway for the Lambda function
-resource "aws_api_gateway_rest_api" "api" {
-  name        = "${var.app_name}-${var.environment}-api"
-  description = "API Gateway for ${var.app_name}"
-}
-
-resource "aws_api_gateway_resource" "resource" {
-  rest_api_id = aws_api_gateway_rest_api.api.id
-  parent_id   = aws_api_gateway_rest_api.api.root_resource_id
-  path_part   = "{proxy+}"
-}
-
-resource "aws_api_gateway_method" "method" {
-  rest_api_id   = aws_api_gateway_rest_api.api.id
-  resource_id   = aws_api_gateway_resource.resource.id
-  http_method   = "ANY"
-  authorization_type = "NONE"
-}
-
-resource "aws_api_gateway_integration" "integration" {
-  rest_api_id = aws_api_gateway_rest_api.api.id
-  resource_id = aws_api_gateway_resource.resource.id
-  http_method = aws_api_gateway_method.method.http_method
-  
-  integration_http_method = "POST"
-  type                    = "AWS_PROXY"
-  uri                     = aws_lambda_function.backend.invoke_arn
-}
-
-resource "aws_api_gateway_deployment" "deployment" {
-  depends_on = [
-    aws_api_gateway_integration.integration
-  ]
-  
-  rest_api_id = aws_api_gateway_rest_api.api.id
-  stage_name  = var.environment
-}
-
-resource "aws_lambda_permission" "apigw_permission" {
-  statement_id  = "AllowAPIGatewayInvoke"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.backend.function_name
-  principal     = "apigateway.amazonaws.com"
-  
-  source_arn = "${aws_api_gateway_rest_api.api.execution_arn}/*/*"
-}
-
-output "api_endpoint" {
-  value = aws_api_gateway_deployment.deployment.invoke_url
-}
-"""
-        resources_added.append("API Gateway")
     
     if "RDS" in services:
-        # Add RDS database
         template += """
-# RDS Database
 resource "aws_db_instance" "database" {
-  identifier             = "${var.app_name}-${var.environment}-db"
-  allocated_storage      = 20
-  storage_type           = "gp2"
-  engine                 = "postgres"
-  engine_version         = "13.7"
-  instance_class         = "db.t3.micro"
-  db_name                = "app"
-  username               = "appuser"
-  password               = "YourStrongPasswordHere123!"  # Change this and use a secure method to store passwords
-  parameter_group_name   = "default.postgres13"
-  skip_final_snapshot    = true
-  backup_retention_period = 7
+  allocated_storage    = 20
+  storage_type         = "gp2"
+  engine               = "mysql"
+  engine_version       = "8.0"
+  instance_class       = "db.t3.micro"
+  identifier           = "${var.app_name}-${var.environment}"
+  username             = "admin"
+  password             = var.db_password
+  parameter_group_name = "default.mysql8.0"
+  skip_final_snapshot  = true
+  publicly_accessible  = false
   
   tags = {
     Name        = "${var.app_name}-database"
     Environment = var.environment
   }
 }
+"""
+    
+    if "Auto Scaling" in services:
+        template += """
+resource "aws_launch_configuration" "app" {
+  name_prefix     = "${var.app_name}-"
+  image_id        = var.ami_id
+  instance_type   = var.instance_type
+  security_groups = [aws_security_group.app.id]
+  
+  lifecycle {
+    create_before_destroy = true
+  }
+}
 
-output "database_endpoint" {
-  value = aws_db_instance.database.endpoint
+resource "aws_autoscaling_group" "app" {
+  name                 = "${var.app_name}-asg"
+  launch_configuration = aws_launch_configuration.app.name
+  min_size             = 1
+  max_size             = 3
+  desired_capacity     = 2
+  vpc_zone_identifier  = var.subnet_ids
+  target_group_arns    = [aws_lb_target_group.app.arn]
+  
+  tag {
+    key                 = "Name"
+    value               = "${var.app_name}-instance"
+    propagate_at_launch = true
+  }
+  
+  tag {
+    key                 = "Environment"
+    value               = var.environment
+    propagate_at_launch = true
+  }
+}
+
+resource "aws_autoscaling_policy" "scale_up" {
+  name                   = "${var.app_name}-scale-up"
+  scaling_adjustment     = 1
+  adjustment_type        = "ChangeInCapacity"
+  cooldown               = 300
+  autoscaling_group_name = aws_autoscaling_group.app.name
+}
+
+resource "aws_autoscaling_policy" "scale_down" {
+  name                   = "${var.app_name}-scale-down"
+  scaling_adjustment     = -1
+  adjustment_type        = "ChangeInCapacity"
+  cooldown               = 300
+  autoscaling_group_name = aws_autoscaling_group.app.name
 }
 """
-        resources_added.append("RDS")
     
-    # If no resources were added, add a placeholder comment
-    if not resources_added:
-        template += """
-# No specific resources were detected
-# Add your resources here based on your application needs
+    # Add output section
+    template += """
+output "app_url" {
+  description = "URL to access the application"
+  value       = try(aws_api_gateway_deployment.api.invoke_url, 
+            try(aws_cloudfront_distribution.frontend.domain_name, 
+            try(aws_lb.app.dns_name, "Not available")))
+}
 """
     
     return template 

@@ -320,7 +320,10 @@ def generate_readme(md_data: Dict[str, Any], analysis: Dict[str, Any]) -> str:
     recommendations = "\n".join([f"- {rec}" for rec in analysis.get("recommendations", [])])
     services = "\n".join([f"- {service}" for service in analysis.get("services", [])])
     
-    return f"""# Infrastructure Deployment
+    # Include the full AI response if available
+    ai_response = analysis.get("ai_response", "")
+    
+    readme = f"""# Infrastructure Deployment
 
 ## Analysis Results
 
@@ -351,6 +354,20 @@ def generate_readme(md_data: Dict[str, Any], analysis: Dict[str, Any]) -> str:
    terraform destroy
    ```
 """
+
+    # Add the full AI analysis if available
+    if ai_response:
+        readme += f"""
+## AI Analysis Output
+
+Below is the complete analysis from Gemini AI:
+
+```
+{ai_response}
+```
+"""
+    
+    return readme
 
 def generate_terraform_files(repo_path: str, analysis: Dict[str, Any], md_data: Dict[str, Any]) -> str:
     """Generate Terraform files in the repository"""
@@ -410,6 +427,9 @@ def main(argv=None):
     try:
         # Read repository information
         repo_info = read_inframate_file(repo_path)
+        
+        # Add repo path to the info
+        repo_info['repo_path'] = repo_path
         
         # Analyze repository structure
         repo_analysis = analyze_repository(repo_path)
