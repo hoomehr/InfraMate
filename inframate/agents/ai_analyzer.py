@@ -398,11 +398,11 @@ resource "aws_s3_bucket" "frontend" {
 
 resource "aws_s3_bucket_website_configuration" "frontend" {
   bucket = aws_s3_bucket.frontend.id
-  
+
   index_document {
     suffix = "index.html"
   }
-  
+
   error_document {
     key = "error.html"
   }
@@ -410,7 +410,7 @@ resource "aws_s3_bucket_website_configuration" "frontend" {
 
 resource "aws_s3_bucket_policy" "frontend" {
   bucket = aws_s3_bucket.frontend.id
-  
+
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -550,7 +550,7 @@ resource "aws_autoscaling_policy" "scale_down" {
 """
     
     # Add output section
-    template += """
+        template += """
 output "app_url" {
   description = "URL to access the application"
   value       = try(aws_api_gateway_deployment.api.invoke_url, 
