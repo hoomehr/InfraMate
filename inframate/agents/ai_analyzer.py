@@ -7,6 +7,7 @@ import yaml
 import google.generativeai as genai
 from dotenv import load_dotenv
 from inframate.utils.rag import RAGManager
+from inframate.utils.cost_estimator import estimate_costs
 import requests
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -130,10 +131,12 @@ Based on this information, please provide:
 1. A list of recommended AWS services for deployment (comma-separated)
 2. Infrastructure recommendations (bullet points)
 3. A complete Terraform template for deploying this application to AWS
+4. A monthly cost estimation for the infrastructure resources
 
 Format your response with clear sections:
 RECOMMENDED_SERVICES: (comma-separated list of AWS services)
 RECOMMENDATIONS: (bullet points for infrastructure recommendations)
+COST_ESTIMATION: (Monthly cost estimation with breakdown by service type)
 TERRAFORM_TEMPLATE: (complete, production-ready Terraform code)
 """
     
@@ -161,14 +164,19 @@ TERRAFORM_TEMPLATE: (complete, production-ready Terraform code)
         services = []
         recommendations = []
         terraform_template = ""
+        cost_estimation = ""
         
         if "RECOMMENDED_SERVICES:" in ai_response:
             services_section = ai_response.split("RECOMMENDED_SERVICES:")[1].split("RECOMMENDATIONS:")[0].strip()
             services = [service.strip() for service in services_section.split(",")]
         
         if "RECOMMENDATIONS:" in ai_response:
-            recommendations_section = ai_response.split("RECOMMENDATIONS:")[1].split("TERRAFORM_TEMPLATE:")[0].strip()
+            recommendations_section = ai_response.split("RECOMMENDATIONS:")[1].split("COST_ESTIMATION:")[0].strip() if "COST_ESTIMATION:" in ai_response else ai_response.split("RECOMMENDATIONS:")[1].split("TERRAFORM_TEMPLATE:")[0].strip()
             recommendations = [rec.strip().lstrip("- ") for rec in recommendations_section.split("\n") if rec.strip()]
+        
+        if "COST_ESTIMATION:" in ai_response:
+            cost_section = ai_response.split("COST_ESTIMATION:")[1].split("TERRAFORM_TEMPLATE:")[0].strip()
+            cost_estimation = cost_section
         
         if "TERRAFORM_TEMPLATE:" in ai_response:
             template_section = ai_response.split("TERRAFORM_TEMPLATE:")[1].strip()
@@ -188,6 +196,7 @@ TERRAFORM_TEMPLATE: (complete, production-ready Terraform code)
             "services": services,
             "recommendations": recommendations,
             "terraform_template": terraform_template,
+            "cost_estimation": cost_estimation,
             "ai_response": ai_response  # Store the full response for the README
         }
     
@@ -248,31 +257,39 @@ def fallback_analyze(repo_info: Dict[str, Any]) -> Dict[str, Any]:
     if 'mongodb' in database:
         services.append("DocumentDB")
         recommendations.append("Use Amazon DocumentDB for MongoDB compatibility")
-    elif 'mysql' in database or 'postgresql' in database:
+    elif 'mysql' in database or 'mariadb' in database:
         services.append("RDS")
-        recommendations.append("Use Amazon RDS for relational database needs")
+        recommendations.append("Use Amazon RDS for MySQL/MariaDB")
+    elif 'postgres' in database or 'postgresql' in database:
+        services.append("RDS")
+        recommendations.append("Use Amazon RDS for PostgreSQL")
+    elif 'redis' in database:
+        services.append("ElastiCache")
+        recommendations.append("Use Amazon ElastiCache for Redis")
     
-    # Add generic recommendations
-    recommendations.extend([
-        "Use Infrastructure as Code (IaC) with Terraform for reproducible deployments",
-        "Implement proper logging and monitoring with CloudWatch",
-        "Set up proper IAM roles and policies for security"
-    ])
+    # Default services if none were identified
+    if not services:
+        services = ["EC2", "VPC", "S3", "CloudWatch"]
+        recommendations.append("Use basic EC2 setup with VPC and S3 storage")
     
-    # Generate a terraform template
-    terraform_template = generate_terraform_template(repo_info, services)
+    # Default recommendations if none were identified
+    if not recommendations:
+        recommendations = [
+            "Use Infrastructure as Code (IaC) with Terraform",
+            "Implement monitoring and logging with CloudWatch",
+            "Set up auto-scaling for handling traffic spikes",
+            "Configure proper security groups and IAM roles"
+        ]
     
-    # Add the fallback information for the README
-    fallback_note = """
-NOTE: This analysis was performed using Inframate's built-in rules since the AI analysis was unavailable.
-For more accurate and detailed recommendations, please ensure the GEMINI_API_KEY is properly configured.
-"""
+    # Use the cost estimator to generate cost estimation
+    cost_result = estimate_costs(services)
+    cost_estimation = cost_result["cost_estimation"]
     
     return {
-        "services": list(set(services)),  # Remove duplicates
+        "services": services,
         "recommendations": recommendations,
-        "terraform_template": terraform_template,
-        "ai_response": fallback_note  # Add note for README
+        "terraform_template": generate_terraform_template(repo_info, services),
+        "cost_estimation": cost_estimation
     }
 
 def generate_terraform_template(repo_info: Dict[str, Any], services: List[str]) -> str:
