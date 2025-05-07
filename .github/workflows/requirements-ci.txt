@@ -1,21 +1,21 @@
 # Core dependencies
-requests==2.32.0
-pathlib==1.0.1
-boto3==1.28.41
-pyyaml==6.0.1
-python-dotenv==1.0.0
-google-generativeai==0.3.2
-gitpython==3.1.37
-click==8.1.7
-colorama==0.4.6
-numpy==1.24.0
+requests>=2.31.0
+pathlib>=1.0.1
+boto3>=1.28.41
+pyyaml>=6.0.1
+python-dotenv>=1.0.0
+google-generativeai>=0.3.2
+gitpython>=3.1.37
+click>=8.1.7
+colorama>=0.4.6
+numpy>=1.24.0
 
-# RAG dependencies
-tiktoken==0.5.2
-# Use specific compatible versions of langchain ecosystem
-langchain==0.0.354  # This older version is compatible with langchain-community 0.0.16
-langchain-community==0.0.16
-langchain-huggingface==0.0.2
-langsmith==0.0.83  # Pin to a specific version that works with both
-sentence-transformers==2.6.0
-faiss-cpu==1.7.4 
+# RAG dependencies - simplified to avoid conflicts
+tiktoken>=0.5.2
+# Use a fresh, clean version without pinning
+langchain>=0.3.0
+langchain-community>=0.3.0
+langchain-huggingface>=0.1.0
+# Don't pin langsmith, let pip resolve it
+sentence-transformers>=2.6.0
+faiss-cpu>=1.7.4 

@@ -6,14 +6,22 @@ import glob
 import numpy as np
 import tiktoken
 from pathlib import Path
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import FAISS
-from langchain.embeddings import HuggingFaceEmbeddings
+
+# First try newer langchain import structure
 try:
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    from langchain_community.vectorstores import FAISS
+    from langchain_community.embeddings import HuggingFaceEmbeddings
     from langchain_huggingface import HuggingFaceEmbeddings as NewHuggingFaceEmbeddings
+    USING_NEW_LANGCHAIN = True
 except ImportError:
-    # For older versions of langchain
+    # Fall back to older import structure
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
+    from langchain.vectorstores import FAISS
+    from langchain.embeddings import HuggingFaceEmbeddings
     from langchain.embeddings import HuggingFaceEmbeddings as NewHuggingFaceEmbeddings
+    USING_NEW_LANGCHAIN = False
+
 from typing import List, Dict, Any
 
 class RAGManager:

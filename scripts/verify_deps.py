@@ -24,11 +24,20 @@ REQUIRED_MODULES = [
 RAG_MODULES = [
     "tiktoken",
     "langchain",
-    "langchain.text_splitter",
-    "langchain.vectorstores",
-    "langchain.embeddings",
     "sentence_transformers",
     "faiss",
+]
+
+# List of import alternatives - we only need one from each list to work
+ALTERNATIVE_IMPORTS = [
+    # Text splitters
+    ["langchain.text_splitter", "langchain_text_splitters"],
+    # Vector stores
+    ["langchain.vectorstores", "langchain_community.vectorstores"],
+    # Embeddings
+    ["langchain.embeddings", "langchain_community.embeddings"],
+    # Huggingface
+    ["langchain_huggingface"],
 ]
 
 def check_imports(modules, category):
@@ -46,14 +55,37 @@ def check_imports(modules, category):
     
     return success
 
+def check_alternative_imports(alternative_groups):
+    """Check that at least one module from each alternative group can be imported."""
+    print("\nChecking alternative imports (need at least one from each group)...")
+    success = True
+    
+    for group in alternative_groups:
+        group_success = False
+        for module in group:
+            try:
+                importlib.import_module(module)
+                print(f"✅ {module}")
+                group_success = True
+                break
+            except ImportError:
+                pass
+        
+        if not group_success:
+            print(f"❌ None of these alternatives could be imported: {', '.join(group)}")
+            success = False
+    
+    return success
+
 def main():
     """Main function."""
     print("Verifying Inframate dependencies...")
     
     core_success = check_imports(REQUIRED_MODULES, "core")
     rag_success = check_imports(RAG_MODULES, "RAG")
+    alt_success = check_alternative_imports(ALTERNATIVE_IMPORTS)
     
-    if core_success and rag_success:
+    if core_success and rag_success and alt_success:
         print("\n✅ All dependencies verified successfully!")
         return 0
     else:

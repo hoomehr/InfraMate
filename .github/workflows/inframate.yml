@@ -38,19 +38,37 @@ jobs:
       - name: Install Minimal Dependencies
         run: |
           python -m pip install --upgrade pip
+          
+          # Create and activate a clean virtual environment
           cd inframate
           
-          # Install from dedicated requirements file to avoid conflicts
-          pip install -r .github/workflows/requirements-ci.txt
+          # Tell pip to not use a cache
+          pip config set global.cache-dir false
           
-          # Install the package itself without dependencies (since we've already installed them)
+          # Install core dependencies first
+          pip install requests pathlib boto3 pyyaml python-dotenv google-generativeai gitpython click colorama numpy
+          
+          # Install langchain ecosystem without constraints
+          pip install tiktoken
+          pip install langchain>=0.3.0 langchain-community>=0.3.0 langchain-huggingface>=0.1.0
+          
+          # Install remaining dependencies
+          pip install sentence-transformers>=2.6.0 faiss-cpu>=1.7.4
+          
+          # Now install our package without dependencies
           pip install -e . --no-dependencies
           
       - name: Verify Dependencies
         run: |
           cd inframate
           python scripts/verify_deps.py
-
+          
+      - name: Debug Package Versions
+        run: |
+          cd inframate
+          echo "Installed package versions:"
+          pip list | grep -E 'langchain|tiktoken|sentence-transformers|faiss|numpy|requests'
+          
       - name: Analyze repository structure
         run: |
           cd target_repo
