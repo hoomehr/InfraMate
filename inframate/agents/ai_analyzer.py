@@ -19,6 +19,9 @@ load_dotenv()
 # Get API key from environment
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
+# Check if debug mode is enabled
+DEBUG_MODE = os.getenv("INFRAMATE_DEBUG", "0") == "1"
+
 # Initialize RAG manager and template manager
 rag_manager = RAGManager()
 template_manager = TemplateManager()
@@ -152,15 +155,41 @@ TERRAFORM_TEMPLATE: (complete, production-ready Terraform code)
             }]
         }
         
+        # Debug info
+        if DEBUG_MODE:
+            print("\n=== SENDING PROMPT TO GEMINI API ===")
+            print(f"API URL: {url}")
+            print(f"Prompt length: {len(prompt)} characters")
+            print("First 500 chars of prompt:")
+            print(prompt[:500])
+            print("...")
+        
         response = requests.post(url, headers=headers, json=data)
         if response.status_code != 200:
             print(f"Warning: Gemini API request failed with status {response.status_code}")
+            print(f"Response: {response.text}")
             return fallback_analyze(repo_info)
         
         response_data = response.json()
         
+        # Debug info for response
+        if DEBUG_MODE:
+            print("\n=== RECEIVED RESPONSE FROM GEMINI API ===")
+            print(f"Status code: {response.status_code}")
+            print(f"Response size: {len(response.text)} characters")
+            print("Full response JSON:")
+            print(json.dumps(response_data, indent=2))
+        
         # Extract the text from the response
         ai_response = response_data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+        
+        # Debug info for parsed response
+        if DEBUG_MODE:
+            print("\n=== PARSED AI RESPONSE ===")
+            print(f"Response text length: {len(ai_response)} characters")
+            print("First 1000 chars of response:")
+            print(ai_response[:1000])
+            print("...")
         
         # Parse the response to extract the services, recommendations, and Terraform template
         services = []
@@ -171,14 +200,32 @@ TERRAFORM_TEMPLATE: (complete, production-ready Terraform code)
         if "RECOMMENDED_SERVICES:" in ai_response:
             services_section = ai_response.split("RECOMMENDED_SERVICES:")[1].split("RECOMMENDATIONS:")[0].strip()
             services = [service.strip() for service in services_section.split(",")]
+            
+            # Debug info for services
+            if DEBUG_MODE:
+                print("\n=== EXTRACTED SERVICES ===")
+                print(f"Number of services: {len(services)}")
+                print(services)
         
         if "RECOMMENDATIONS:" in ai_response:
             recommendations_section = ai_response.split("RECOMMENDATIONS:")[1].split("COST_ESTIMATION:")[0].strip() if "COST_ESTIMATION:" in ai_response else ai_response.split("RECOMMENDATIONS:")[1].split("TERRAFORM_TEMPLATE:")[0].strip()
             recommendations = [rec.strip().lstrip("- ") for rec in recommendations_section.split("\n") if rec.strip()]
+            
+            # Debug info for recommendations
+            if DEBUG_MODE:
+                print("\n=== EXTRACTED RECOMMENDATIONS ===")
+                print(f"Number of recommendations: {len(recommendations)}")
+                for i, rec in enumerate(recommendations):
+                    print(f"{i+1}. {rec}")
         
         if "COST_ESTIMATION:" in ai_response:
             cost_section = ai_response.split("COST_ESTIMATION:")[1].split("TERRAFORM_TEMPLATE:")[0].strip()
             cost_estimation = cost_section
+            
+            # Debug info for cost estimation
+            if DEBUG_MODE:
+                print("\n=== EXTRACTED COST ESTIMATION ===")
+                print(cost_estimation)
         
         if "TERRAFORM_TEMPLATE:" in ai_response:
             template_section = ai_response.split("TERRAFORM_TEMPLATE:")[1].strip()
@@ -193,6 +240,14 @@ TERRAFORM_TEMPLATE: (complete, production-ready Terraform code)
             else:
                 # Just use the raw template
                 terraform_template = template_section
+            
+            # Debug info for terraform template
+            if DEBUG_MODE:
+                print("\n=== EXTRACTED TERRAFORM TEMPLATE ===")
+                print(f"Template length: {len(terraform_template)} characters")
+                print("First 500 chars of template:")
+                print(terraform_template[:500])
+                print("...")
         
         return {
             "services": services,

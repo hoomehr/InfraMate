@@ -130,20 +130,36 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           cd target_repo
+          # Enable debug output for Gemini API response
+          export INFRAMATE_DEBUG=1
           python -m inframate.flow .
           
       - name: Extract Infrastructure Structure and Costs
         id: extract_infra
         run: |
-          cd target_repo/terraform
+          cd target_repo
           
-          # Extract cost estimate from the README.md if it exists
-          if [ -f "README.md" ]; then
-            COST_ESTIMATE=$(grep -A 20 "## Estimated Costs" README.md || echo "Cost estimation not available")
+          # Debug what files were created
+          echo "Files in terraform directory:"
+          ls -la terraform/
+          
+          # Use the dedicated cost extraction script
+          if [ -f "terraform/README.md" ]; then
+            echo "Found terraform/README.md - Extracting cost info"
+            
+            # Extract and save cost information using the helper script
+            COST_ESTIMATE=$(cd ../inframate && python scripts/extract_costs.py --readme ../target_repo/terraform/README.md)
             echo "COST_ESTIMATE<<EOF" >> $GITHUB_ENV
             echo "$COST_ESTIMATE" >> $GITHUB_ENV
             echo "EOF" >> $GITHUB_ENV
           else
+            echo "WARNING: terraform/README.md not found"
+            echo "Current directory contents:"
+            ls -la
+            
+            # Try to find README.md elsewhere
+            find . -name "README.md" -type f -exec echo "Found README at {}" \;
+            
             echo "COST_ESTIMATE=Cost estimation not available" >> $GITHUB_ENV
           fi
           
