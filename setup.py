@@ -21,12 +21,12 @@ REQUIRED_DEPENDENCIES = [
 OPTIONAL_DEPENDENCIES = {
     "rag": [
         "tiktoken>=0.5.2",
-        "langchain>=0.1.0",
-        "langchain-community>=0.0.16",
-        "langchain-huggingface>=0.0.2",
+        "langchain>=0.1.0,<0.2.0",
+        "langchain-community>=0.0.16,<0.1.0",
+        "langchain-huggingface>=0.0.2,<0.1.0",
         "sentence-transformers>=2.6.0",
         "faiss-cpu>=1.7.4",
-        "huggingface_hub[hf_xet]>=0.20.3"
+        "huggingface_hub>=0.20.3",
     ],
     "web": [
         "flask>=3.1.0",
@@ -40,9 +40,10 @@ OPTIONAL_DEPENDENCIES = {
 }
 
 # All dependencies
-ALL_DEPENDENCIES = REQUIRED_DEPENDENCIES + \
-    OPTIONAL_DEPENDENCIES["rag"] + \
-    OPTIONAL_DEPENDENCIES["web"]
+ALL_DEPENDENCIES = REQUIRED_DEPENDENCIES.copy()
+for package_list in OPTIONAL_DEPENDENCIES.values():
+    if package_list != OPTIONAL_DEPENDENCIES["dev"]:  # Skip dev dependencies in "all"
+        ALL_DEPENDENCIES.extend(package_list)
 
 setup(
     name="inframate",
