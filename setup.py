@@ -14,6 +14,7 @@ REQUIRED_DEPENDENCIES = [
     "gitpython>=3.1.37",
     "click>=8.1.7",
     "colorama>=0.4.6",
+    "numpy>=1.24.0",
 ]
 
 # Optional dependencies for enhanced features

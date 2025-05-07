@@ -41,7 +41,7 @@ jobs:
           cd inframate
           pip install -e . --no-dependencies
           # Install only the required dependencies for the analysis process
-          pip install requests pathlib pyyaml python-dotenv google-generativeai gitpython click colorama
+          pip install requests pathlib pyyaml python-dotenv google-generativeai gitpython click colorama numpy
 
       - name: Analyze repository structure
         run: |
