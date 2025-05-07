@@ -1,5 +1,43 @@
 ---
-description:
-globs:
+description: 
+globs: 
 alwaysApply: false
 ---
+Inframate: AI-Powered Infrastructure Deployment Assistant
+Inframate is a command line tool that analyzes code repositories and helps deploy them to AWS by recommending appropriate infrastructure resources and generating Terraform templates.
+Key Components:
+CLI Interface (inframate/cli.py):
+analyze command: Analyzes repositories to determine deployment requirements
+deploy command: Deploys to AWS directly or generates Terraform templates
+Repository Analysis (inframate/analyzers/repository.py):
+Examines repository content and structure
+Detects programming languages, frameworks, and required infrastructure
+Supports custom configuration via .inframate.yaml
+AI Analyzer (inframate/agents/ai_analyzer.py):
+Uses Google Gemini AI model to generate infrastructure recommendations
+Creates detailed prompts that include repository data for AI analysis
+Implements a RAG (Retrieval-Augmented Generation) approach for improved Terraform template generation
+Falls back to basic generation when AI is unavailable
+AWS Deployment Provider (inframate/providers/aws.py):
+Handles deployment to AWS using:
+CloudFormation
+Terraform
+Direct resource creation with boto3
+Configures AWS sessions based on profile and region
+Extracts deployment configuration from analysis or user config
+Terraform Template Generation:
+AI-based template generation with context from similar templates
+Pre-built templates for common infrastructure components:
+EC2 instances
+Lambda functions
+S3 static websites
+Fallback generation based on detected services when AI is unavailable
+Workflow:
+User runs inframate analyze <repo_path> to analyze a repository
+Inframate examines the code, detects languages, frameworks, and infrastructure needs
+AI recommends appropriate AWS services and generates deployment recommendations
+User can either:
+Deploy directly with inframate deploy <repo_path>
+Generate a Terraform template with inframate deploy <repo_path> --terraform
+When deploying, Inframate creates AWS resources based on the analysis results
+The system appears to be in development, as the AWS deployment functions contain placeholder comments indicating "not implemented in this version" and return mock results with DEMO_MODE status.

@@ -42,12 +42,16 @@ Inframate reads an `inframate.md` file containing details about your application
    - Complete Terraform templates for deployment
    - Estimated monthly cost breakdown for all resources
 
-4. **Terraform Generation**: Inframate creates a complete set of Terraform files:
-   - `main.tf`: Primary infrastructure definition
-   - `variables.tf`: Variable definitions
-   - `outputs.tf`: Output declarations
-   - `terraform.tfvars`: Default variable values
-   - `README.md`: Documentation including cost estimates and deployment instructions
+4. **Terraform Generation**: Inframate uses a template-based approach to generate Terraform files:
+   - Templates are stored in the `templates/aws/terraform/` directory
+   - Each template focuses on a specific service type (e.g., `nodejs_lambda.tf`, `vpc.tf`, `ecs.tf`)
+   - Templates are combined based on the recommended services
+   - The following files are generated:
+     - `main.tf`: Primary infrastructure definition
+     - `variables.tf`: Variable definitions
+     - `outputs.tf`: Output declarations
+     - `terraform.tfvars`: Default variable values
+     - `README.md`: Documentation including cost estimates and deployment instructions
 
 ## Using Inframate
 
@@ -96,27 +100,53 @@ You can also run Inframate locally:
    python inframate_flow.py /path/to/your/repo
    ```
 
-## Templates
+## Available Templates
 
-Inframate includes a set of pre-built Terraform templates for common application patterns:
+Inframate includes a comprehensive set of Terraform templates for AWS services, located in `templates/aws/terraform/`:
 
-- **Node.js Lambda**: Serverless applications using Lambda and API Gateway
-- **Web Applications**: Frontend (S3+CloudFront) and backend (EC2/ECS)
-- **Database Resources**: RDS, DynamoDB, and ElastiCache
-- **Microservices**: ECS/EKS deployments for containerized applications
+### Compute
+- **nodejs_lambda.tf**: Serverless applications using Lambda and API Gateway
+- **ec2.tf**: Traditional VM deployments with auto-scaling capabilities
+- **ecs.tf**: Container orchestration using ECS Fargate
+- **eks.tf**: Kubernetes clusters with managed node groups
 
-These templates are used as a starting point and enhanced with AI recommendations.
+### Networking
+- **vpc.tf**: VPC configuration with public/private subnets and NAT gateways
+- **alb.tf**: Application Load Balancer with auto-scaling and monitoring
+- **cloudfront.tf**: Content delivery network with S3 origins
+- **api_gateway.tf**: RESTful API endpoints with Lambda integration
+
+### Database
+- **database.tf**: Relational databases using Amazon RDS
+- **dynamodb.tf**: NoSQL database with auto-scaling and streams
+
+### Storage
+- **webapp.tf**: Static website hosting with S3 and CloudFront
+
+Each template is designed to work independently or in combination with others, providing a flexible and modular approach to infrastructure definition.
 
 ## Example
 
-For a Node.js Express API with MongoDB, Inframate will generate:
-- Lambda function for the Express.js API
-- API Gateway configuration
-- Auto-scaling policies
-- IAM roles and permissions
-- CloudWatch logging
-- MongoDB Atlas connection (or DocumentDB)
-- Estimated monthly cost breakdown for all services
+For a Node.js Express API with MongoDB, Inframate will:
+1. Analyze the repository and detect Node.js/Express.js
+2. Use the Gemini API to recommend appropriate AWS services
+3. Combine the `vpc.tf`, `nodejs_lambda.tf`, `api_gateway.tf`, and `dynamodb.tf` templates
+4. Generate a complete Terraform configuration with:
+   - VPC with public/private subnets
+   - Lambda function for the Express.js API
+   - API Gateway with custom domain and monitoring
+   - DynamoDB table for NoSQL data storage
+   - IAM roles and permissions
+   - CloudWatch logging and alarms
+   - Estimated monthly cost breakdown for all services
+
+## Template Customization
+
+You can easily customize the templates or add new ones:
+
+1. Create a new `.tf` file in the `templates/aws/terraform/` directory
+2. Update the template manager in `inframate/utils/template_manager.py` to include your new template
+3. Map the appropriate AWS services to your template in the `service_to_template` dictionary
 
 ## Requirements
 
@@ -124,16 +154,12 @@ For a Node.js Express API with MongoDB, Inframate will generate:
 - [Google Gemini API key](https://ai.google.dev/)
 - Terraform (for deployment)
 
-## Next Steps
-
-- Add support for more cloud providers (Azure, GCP)
-- Enhance repository analysis with language-specific parsers
-- Add deployment automation
-- Create a web interface for easier use
-
-## Inframate Components
+## Project Structure
 
 - `inframate_flow.py`: Main script that orchestrates the analysis and generation
+- `inframate/agents/ai_analyzer.py`: AI-powered analysis using Gemini API
+- `inframate/utils/template_manager.py`: Manages and combines Terraform templates
+- `templates/aws/terraform/`: Pre-built Terraform templates for different service types
 - `test_json_app/`: Sample application used for testing
 - `test_json_app/terraform/`: Generated Terraform files
 
@@ -154,11 +180,13 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:g
 
 When the Gemini API is unavailable, Inframate falls back to rule-based analysis using predefined templates.
 
-## Requirements
+## Dependencies
 
 See `requirements.txt` for dependencies:
 - flask
 - requests
+- google-generativeai
+- terraform-local
 
 ## Next Steps
 
