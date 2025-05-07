@@ -21,9 +21,10 @@ REQUIRED_DEPENDENCIES = [
 OPTIONAL_DEPENDENCIES = {
     "rag": [
         "tiktoken>=0.5.2",
-        "langchain>=0.1.0,<0.2.0",
-        "langchain-community>=0.0.16,<0.1.0",
-        "langchain-huggingface>=0.0.2,<0.1.0",
+        "langchain>=0.0.350,<0.1.0",
+        "langchain-community>=0.0.16,<0.0.17",
+        "langchain-huggingface>=0.0.2,<0.0.3",
+        "langsmith>=0.0.83,<0.0.84",
         "sentence-transformers>=2.6.0",
         "faiss-cpu>=1.7.4",
         "huggingface_hub>=0.20.3",

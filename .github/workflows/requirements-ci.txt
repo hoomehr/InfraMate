@@ -12,8 +12,10 @@ numpy==1.24.0
 
 # RAG dependencies
 tiktoken==0.5.2
-langchain==0.1.0
+# Use specific compatible versions of langchain ecosystem
+langchain==0.0.354  # This older version is compatible with langchain-community 0.0.16
 langchain-community==0.0.16
 langchain-huggingface==0.0.2
+langsmith==0.0.83  # Pin to a specific version that works with both
 sentence-transformers==2.6.0
 faiss-cpu==1.7.4 

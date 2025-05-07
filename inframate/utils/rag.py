@@ -7,9 +7,13 @@ import numpy as np
 import tiktoken
 from pathlib import Path
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_huggingface import HuggingFaceEmbeddings as NewHuggingFaceEmbeddings
+from langchain.vectorstores import FAISS
+from langchain.embeddings import HuggingFaceEmbeddings
+try:
+    from langchain_huggingface import HuggingFaceEmbeddings as NewHuggingFaceEmbeddings
+except ImportError:
+    # For older versions of langchain
+    from langchain.embeddings import HuggingFaceEmbeddings as NewHuggingFaceEmbeddings
 from typing import List, Dict, Any
 
 class RAGManager:

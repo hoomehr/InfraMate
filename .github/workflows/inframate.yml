@@ -45,6 +45,11 @@ jobs:
           
           # Install the package itself without dependencies (since we've already installed them)
           pip install -e . --no-dependencies
+          
+      - name: Verify Dependencies
+        run: |
+          cd inframate
+          python scripts/verify_deps.py
 
       - name: Analyze repository structure
         run: |
