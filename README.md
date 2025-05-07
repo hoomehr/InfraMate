@@ -154,6 +154,45 @@ You can easily customize the templates or add new ones:
 - [Google Gemini API key](https://ai.google.dev/)
 - Terraform (for deployment)
 
+## Installation & Dependencies
+
+Inframate uses a modular dependency structure to minimize installation size and optimize performance:
+
+### Basic Installation
+```bash
+# Install only core dependencies
+pip install -e .
+```
+
+### Installing with Optional Components
+```bash
+# Install with RAG (Retrieval-Augmented Generation) support
+pip install -e .[rag]
+
+# Install with web interface support
+pip install -e .[web]
+
+# Install with development tools
+pip install -e .[dev]
+
+# Install all dependencies
+pip install -e .[all]
+```
+
+### Dependencies Breakdown
+
+- **Core**: Basic functionality for repository analysis and template generation
+  - requests, pathlib, boto3, pyyaml, python-dotenv, google-generativeai, gitpython, click, colorama
+
+- **RAG**: Enhanced AI capabilities with RAG approach
+  - tiktoken, langchain, sentence-transformers, faiss-cpu, etc.
+
+- **Web**: Web interface for easier management
+  - flask
+
+- **Dev**: Development and testing tools
+  - pytest, black, isort, flake8
+
 ## Project Structure
 
 - `inframate_flow.py`: Main script that orchestrates the analysis and generation
