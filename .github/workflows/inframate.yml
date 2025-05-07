@@ -43,7 +43,7 @@ jobs:
           # Install only the required dependencies for the analysis process
           pip install requests pathlib pyyaml python-dotenv google-generativeai gitpython click colorama numpy
           # Install RAG-related dependencies
-          pip install tiktoken langchain==0.1.0 langchain-community==0.0.16 langchain-huggingface==0.0.2 sentence-transformers==2.2.2 faiss-cpu==1.7.4
+          pip install tiktoken langchain==0.1.0 langchain-community==0.0.16 langchain-huggingface==0.0.2 sentence-transformers>=2.6.0 faiss-cpu==1.7.4
 
       - name: Analyze repository structure
         run: |

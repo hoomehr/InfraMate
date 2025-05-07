@@ -24,7 +24,7 @@ OPTIONAL_DEPENDENCIES = {
         "langchain>=0.1.0",
         "langchain-community>=0.0.16",
         "langchain-huggingface>=0.0.2",
-        "sentence-transformers>=2.2.2",
+        "sentence-transformers>=2.6.0",
         "faiss-cpu>=1.7.4",
         "huggingface_hub[hf_xet]>=0.20.3"
     ],
