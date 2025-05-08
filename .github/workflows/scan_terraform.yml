@@ -1,0 +1,27 @@
+# Simple Terraform Scan Workflow
+name: Scan Terraform
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_repo:
+        description: 'Target repository to scan'
+        required: true
+        default: '.'
+      target_branch:
+        description: 'Branch to scan'
+        required: true
+        default: 'main'
+
+jobs:
+  scan:
+    name: Scan Terraform
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Find Terraform files
+        run: |
+          echo "Scanning for Terraform files..."
+          find . -name "*.tf" | sort 

@@ -1,3 +1,4 @@
+# Scan Infrastructure Workflow for Terraform files
 name: Scan Infrastructure
 
 on:
