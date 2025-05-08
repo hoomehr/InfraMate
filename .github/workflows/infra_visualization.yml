@@ -78,7 +78,13 @@ jobs:
         if: steps.find_tf.outputs.tf_found == 'true'
         run: |
           cd target_repo
-          MAIN_TF_DIR=$(cat $GITHUB_OUTPUT | grep main_tf_dir | cut -d= -f2 || echo ".")
+          # Access the output variable using the ${{ }} syntax - this is properly injected by GitHub Actions
+          MAIN_TF_DIR="${{ steps.find_tf.outputs.main_tf_dir }}"
+          
+          # If main_tf_dir is empty, default to the current directory
+          if [ -z "$MAIN_TF_DIR" ]; then
+            MAIN_TF_DIR="."
+          fi
           
           # Ensure the directory exists
           if [ ! -d "$MAIN_TF_DIR" ]; then
