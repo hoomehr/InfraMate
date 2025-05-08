@@ -271,18 +271,34 @@ variable "key_name" {
 }
 """
 
-def generate_outputs_tf(md_data: Dict[str, Any], exclude_outputs: Set[str] = None) -> str:
+def generate_outputs_tf(md_data: Dict[str, Any], exclude_outputs: Set[str] = None, existing_resources: Set[str] = None) -> str:
     """Generate outputs.tf file
     
     Args:
         md_data: Metadata from inframate.md
         exclude_outputs: Set of output names to exclude (to prevent duplicates with main.tf)
+        existing_resources: Set of resources that exist in the template (to avoid references to non-existent resources)
         
     Returns:
         String containing the outputs.tf content
     """
     if exclude_outputs is None:
         exclude_outputs = set()
+    
+    if existing_resources is None:
+        existing_resources = set()
+    
+    # Define resource dependencies for each output
+    output_dependencies = {
+        "api_url": "aws_api_gateway_deployment.api",
+        "lambda_function_name": "aws_lambda_function.api",
+        "s3_bucket_name": "aws_s3_bucket.app_bucket",
+        "ec2_instance_ip": "aws_instance.app_server",
+        "rds_endpoint": "aws_db_instance.db_instance",
+        "alb_dns_name": "aws_lb.alb",
+        "cloudfront_domain_name": "aws_cloudfront_distribution.distribution",
+        "ecs_cluster_name": "aws_ecs_cluster.cluster"
+    }
     
     # Define all possible outputs
     all_outputs = {
@@ -301,14 +317,41 @@ def generate_outputs_tf(md_data: Dict[str, Any], exclude_outputs: Set[str] = Non
         "ec2_instance_ip": """output "ec2_instance_ip" {
   description = "IP address of the EC2 instance (if deployed)"
   value       = try(aws_instance.app_server.public_ip, "N/A")
+}""",
+        "rds_endpoint": """output "rds_endpoint" {
+  description = "Endpoint of the RDS instance (if deployed)"
+  value       = try(aws_db_instance.db_instance.endpoint, "N/A")
+}""",
+        "alb_dns_name": """output "alb_dns_name" {
+  description = "DNS name of the Application Load Balancer (if deployed)"
+  value       = try(aws_lb.alb.dns_name, "N/A")
+}""",
+        "cloudfront_domain_name": """output "cloudfront_domain_name" {
+  description = "Domain name of the CloudFront distribution (if deployed)"
+  value       = try(aws_cloudfront_distribution.distribution.domain_name, "N/A")
+}""",
+        "ecs_cluster_name": """output "ecs_cluster_name" {
+  description = "Name of the ECS cluster (if deployed)"
+  value       = try(aws_ecs_cluster.cluster.name, "N/A")
 }"""
     }
     
-    # Filter out excluded outputs
-    included_outputs = [output for name, output in all_outputs.items() if name not in exclude_outputs]
+    # Filter out excluded outputs and outputs for non-existent resources
+    included_outputs = []
+    
+    for name, output in all_outputs.items():
+        if name in exclude_outputs:
+            continue
+            
+        dependency = output_dependencies.get(name)
+        if dependency and dependency not in existing_resources:
+            # Skip outputs for resources that don't exist
+            continue
+            
+        included_outputs.append(output)
     
     if not included_outputs:
-        return "# No outputs defined that aren't already in main.tf"
+        return "# No outputs defined - resources are not available or are already defined in main.tf"
     
     return "# Outputs for Terraform configuration\n\n" + "\n\n".join(included_outputs)
 
@@ -531,10 +574,13 @@ def generate_terraform_files(repo_path: str, analysis: Dict[str, Any], md_data: 
     # Perform additional validation and fixes
     terraform_template = validate_terraform_template(terraform_template)
     
-    # Extract outputs from main.tf to avoid duplication in outputs.tf
+    # Extract outputs and detect resources in main.tf
     main_outputs, _ = template_manager.extract_outputs(terraform_template)
-    print(f"Found existing outputs in main.tf: {main_outputs}")
+    existing_resources = template_manager.detect_resources(terraform_template)
     
+    print(f"Found existing outputs in main.tf: {main_outputs}")
+    print(f"Found existing resources in main.tf: {existing_resources}")
+
     # Write main.tf
     with open(os.path.join(tf_dir, 'main.tf'), 'w') as f:
         f.write(terraform_template)
@@ -544,8 +590,8 @@ def generate_terraform_files(repo_path: str, analysis: Dict[str, Any], md_data: 
     with open(os.path.join(tf_dir, 'variables.tf'), 'w') as f:
         f.write(variables_tf)
     
-    # Generate outputs.tf, excluding outputs already in main.tf
-    outputs_tf = generate_outputs_tf(md_data, main_outputs)
+    # Generate outputs.tf, excluding outputs already in main.tf and including only resources that exist
+    outputs_tf = generate_outputs_tf(md_data, main_outputs, existing_resources)
     with open(os.path.join(tf_dir, 'outputs.tf'), 'w') as f:
         f.write(outputs_tf)
     
@@ -571,9 +617,6 @@ def validate_terraform_template(template: str) -> str:
     Returns:
         Validated and fixed template
     """
-    # Make sure we're not referencing undefined variables
-    # This is a basic regex match, not a full HCL parser
-    
     # Fix missing try() functions in outputs
     template = re.sub(
         r'output\s+"([^"]+)"\s+{\s+[^}]*?value\s+=\s+([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+)[^}]*?}',
@@ -588,6 +631,46 @@ def validate_terraform_template(template: str) -> str:
         r'\1network_interfaces {',
         template,
         flags=re.DOTALL
+    )
+    
+    # Fix name vs db_name in aws_db_instance (duplicating logic from template_manager for redundancy)
+    template = re.sub(
+        r'(resource\s+"aws_db_instance"\s+"[^"]+"\s+{\s+[^}]*?)(\s+)name(\s+)=(\s+)(["\'][^"\']+["\'])',
+        r'\1\2db_name\3=\4\5',
+        template,
+        flags=re.DOTALL
+    )
+    
+    # Fix incorrect availability_zone vs availability_zones in autoscaling group
+    template = re.sub(
+        r'(resource\s+"aws_autoscaling_group"\s+"[^"]+"\s+{\s+[^}]*?)availability_zone(\s+)=',
+        r'\1availability_zones\2=',
+        template,
+        flags=re.DOTALL
+    )
+    
+    # Ensure all aws_security_group_rule have type specified
+    template = re.sub(
+        r'(resource\s+"aws_security_group_rule"\s+"[^"]+"\s+{\s+[^}]*?)(^\s*})',
+        r'\1  type = "ingress"\n\2',
+        template,
+        flags=re.DOTALL | re.MULTILINE
+    )
+    
+    # Verify that subnet_ids are lists
+    template = re.sub(
+        r'(\s+subnet_ids\s+=\s+)("[\w-]+")',
+        r'\1[\2]',
+        template,
+        flags=re.DOTALL
+    )
+    
+    # Ensure that all aws_instance resources have ami specified
+    template = re.sub(
+        r'(resource\s+"aws_instance"\s+"[^"]+"\s+{\s+)(?!.*\bami\s*=)(.*?)(^\s*})',
+        r'\1  ami = var.ami_id\n\2\3',
+        template,
+        flags=re.DOTALL | re.MULTILINE
     )
     
     return template

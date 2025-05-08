@@ -54,6 +54,51 @@ class TemplateManager:
             flags=re.DOTALL
         )
         
+        # Fix name vs db_name in aws_db_instance
+        template = re.sub(
+            r'(resource\s+"aws_db_instance"\s+"[^"]+"\s+{\s+[^}]*?)(\s+)name(\s+)=(\s+)(["\'][^"\']+["\'])',
+            r'\1\2db_name\3=\4\5',
+            template,
+            flags=re.DOTALL
+        )
+        
+        # Ensure RDS instances have valid engine names
+        template = re.sub(
+            r'(resource\s+"aws_db_instance"[^{]*{\s+[^}]*?)(\s+)engine(\s+)=(\s+)(["\'])(mysql|postgres|mariadb|oracle|mssql)(\s*server|\s*-\s*[\w]+)?(["\'])',
+            lambda m: m.group(1) + m.group(2) + "engine" + m.group(3) + "=" + m.group(4) + m.group(5) + 
+                     {"mysql": "mysql", "postgres": "postgres", "postgresql": "postgres", "mariadb": "mariadb", 
+                      "oracle": "oracle-ee", "mssql": "sqlserver-ee", "mssql server": "sqlserver-ee", 
+                      "sql server": "sqlserver-ee"}.get(m.group(6).lower(), m.group(6)) + m.group(8),
+            template,
+            flags=re.DOTALL
+        )
+        
+        # Fix missing engine version for RDS instances
+        template = re.sub(
+            r'(resource\s+"aws_db_instance"[^{]*{\s+[^}]*?)(\s+engine\s+=\s+["\'](\w+)["\'])',
+            lambda m: m.group(1) + m.group(2) + "\n  engine_version = " + 
+                     {"mysql": "\"8.0\"", "postgres": "\"13.4\"", "mariadb": "\"10.5\"", 
+                      "oracle-ee": "\"19.0\"", "sqlserver-ee": "\"15.00\""}.get(m.group(3), "\"latest\""),
+            template,
+            flags=re.DOTALL
+        )
+        
+        # Fix missing instance class for RDS instances
+        template = re.sub(
+            r'(resource\s+"aws_db_instance"[^{]*{\s+[^}]*?)(?!.*instance_class\s*=)(.*?)(^\s*})',
+            r'\1  instance_class = "db.t3.micro"\n\2\3',
+            template,
+            flags=re.DOTALL | re.MULTILINE
+        )
+        
+        # Fix missing allocated_storage for RDS instances
+        template = re.sub(
+            r'(resource\s+"aws_db_instance"[^{]*{\s+[^}]*?)(?!.*allocated_storage\s*=)(.*?)(^\s*})',
+            r'\1  allocated_storage = 20\n\2\3',
+            template,
+            flags=re.DOTALL | re.MULTILINE
+        )
+        
         # Ensure all referenced resources in outputs have try() functions
         template = re.sub(
             r'(output\s+"[^"]+"\s+{\s+[^}]*?value\s+=\s+)([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+)([^}]*?})',
@@ -192,4 +237,27 @@ provider "aws" {
             if template not in template_names:
                 template_names.append(template)
 
-        return self.combine_templates(template_names) 
+        return self.combine_templates(template_names)
+
+    def detect_resources(self, template: str) -> Set[str]:
+        """
+        Detect which resources exist in a Terraform template
+        
+        Args:
+            template: Terraform template content
+            
+        Returns:
+            Set of resource identifiers in format "type.name"
+        """
+        resources = set()
+        
+        # Match all resource blocks
+        resource_pattern = re.compile(r'resource\s+"([^"]+)"\s+"([^"]+)"\s+{', re.DOTALL)
+        matches = resource_pattern.finditer(template)
+        
+        for match in matches:
+            resource_type = match.group(1)
+            resource_name = match.group(2)
+            resources.add(f"{resource_type}.{resource_name}")
+        
+        return resources 
