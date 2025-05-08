@@ -53,6 +53,13 @@ Inframate reads an `inframate.md` file containing details about your application
      - `terraform.tfvars`: Default variable values
      - `README.md`: Documentation including cost estimates and deployment instructions
 
+5. **CI/CD Automation**: Inframate includes a full Terraform CI/CD pipeline:
+   - Automated Terraform plan execution
+   - Security scanning with tfsec
+   - Optional deployment after approval
+   - PR comments with results of each step
+   - Cost estimation included in the PR
+
 ## Using Inframate
 
 ### As a GitHub Action
@@ -80,7 +87,31 @@ The easiest way to use Inframate is as a GitHub Action:
            uses: yourusername/inframate@main
            with:
              gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+             should_deploy: false  # Set to true to deploy the infrastructure
    ```
+
+### Full CI/CD Pipeline
+
+Inframate includes a comprehensive CI/CD pipeline for Terraform:
+
+1. **Analysis**: Generate infrastructure recommendations and Terraform files
+2. **Plan**: Runs `terraform plan` and adds the output to the PR
+3. **Security Testing**: Scans for security issues with tfsec
+4. **Optional Deployment**: Can automatically deploy the infrastructure
+
+To use the CI/CD pipeline, you'll need to set up the following secrets:
+- `GEMINI_API_KEY`: Your Google Gemini API key
+- `REPO_PAT`: GitHub token with repo permissions
+- `TF_API_TOKEN`: Terraform Cloud token (optional)
+- `AWS_ACCESS_KEY_ID`: AWS access key (for deployment)
+- `AWS_SECRET_ACCESS_KEY`: AWS secret key (for deployment)
+
+When triggered, the workflow:
+1. Creates a pull request with the Terraform files
+2. Adds cost estimates and infrastructure overview to the PR description
+3. Runs Terraform plan and adds the results as a comment
+4. Scans for security issues and adds the results as a comment
+5. Optionally deploys the infrastructure if `should_deploy` is true
 
 ### Local Usage
 

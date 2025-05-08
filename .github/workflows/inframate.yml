@@ -278,7 +278,7 @@ jobs:
           delete-branch: true
 
       - name: Upload Terraform as Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: terraform-files
           path: target_repo/terraform/
@@ -298,7 +298,7 @@ jobs:
           token: ${{ secrets.REPO_PAT }}
           
       - name: Download Terraform Files
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: terraform-files
           path: terraform
@@ -342,7 +342,7 @@ jobs:
         continue-on-error: true
         
       - name: Upload Plan Result
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: terraform-plan
           path: terraform/terraform_plan.txt
@@ -379,7 +379,7 @@ jobs:
           token: ${{ secrets.REPO_PAT }}
           
       - name: Download Terraform Files
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: terraform-files
           path: terraform
@@ -456,7 +456,7 @@ jobs:
           token: ${{ secrets.REPO_PAT }}
           
       - name: Download Terraform Files
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: terraform-files
           path: terraform
@@ -486,7 +486,7 @@ jobs:
           terraform apply -auto-approve -input=false | tee terraform_apply.txt
           
       - name: Upload Apply Result
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: terraform-apply
           path: terraform/terraform_apply.txt
