@@ -1,4 +1,4 @@
-name: Inframate Analysis
+name: Create Infrastructure
 
 on:
   workflow_dispatch:

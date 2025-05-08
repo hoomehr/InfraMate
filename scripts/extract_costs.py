@@ -1,43 +1,67 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
-Extract cost information from the Terraform README.md file.
-This script can be used in CI/CD pipelines to include cost 
-information in pull request descriptions.
+Extract cost information from Terraform README files
 """
-import os
+import re
 import sys
 import argparse
-from pathlib import Path
 
-# Add parent directory to path for imports
-sys.path.append(str(Path(__file__).resolve().parent.parent))
-from inframate.utils.cost_extractor import get_formatted_cost_info
+def extract_costs_from_readme(readme_path):
+    """
+    Extract cost information from a README file
+    
+    Args:
+        readme_path: Path to the README file
+        
+    Returns:
+        String containing the extracted cost information
+    """
+    try:
+        with open(readme_path, 'r') as f:
+            content = f.read()
+    except Exception as e:
+        return f"Error reading file: {str(e)}"
+    
+    # Look for Cost section using various patterns
+    cost_patterns = [
+        r'(?:##\s*(?:Estimated|Monthly|Approximate)\s*(?:Monthly\s*)?Costs?).*?(?=##|$)',
+        r'(?:##\s*Cost\s*Estimation).*?(?=##|$)',
+        r'(?:##\s*Costs?).*?(?=##|$)',
+        r'(?:Cost\s*Breakdown).*?(?=##|$)'
+    ]
+    
+    for pattern in cost_patterns:
+        match = re.search(pattern, content, re.DOTALL | re.IGNORECASE)
+        if match:
+            cost_section = match.group(0).strip()
+            # Clean up the section to remove unnecessary formatting
+            cost_section = re.sub(r'```.*?```', '', cost_section, flags=re.DOTALL)
+            return cost_section
+    
+    # If no dedicated cost section found, look for cost information in the content
+    cost_lines = []
+    lines = content.split('\n')
+    for i, line in enumerate(lines):
+        if re.search(r'cost|price|\$|usd|estimate', line, re.IGNORECASE):
+            # Include context (line before and after)
+            start = max(0, i-1)
+            end = min(len(lines), i+2)
+            cost_lines.extend(lines[start:end])
+            cost_lines.append('')  # Add a blank line for readability
+    
+    if cost_lines:
+        return "\n".join(cost_lines)
+    
+    return "No cost information found in the file."
 
 def main():
-    """Extract cost information from README.md file."""
-    parser = argparse.ArgumentParser(description="Extract cost information from README.md")
-    parser.add_argument("--readme", default="terraform/README.md", 
-                        help="Path to the README.md file (default: terraform/README.md)")
-    parser.add_argument("--output", default=None,
-                        help="Path to output file (default: print to stdout)")
+    parser = argparse.ArgumentParser(description='Extract cost information from README.md files')
+    parser.add_argument('--readme', required=True, help='Path to the README.md file')
     
     args = parser.parse_args()
     
-    # Make path absolute if it's relative
-    readme_path = args.readme
-    if not os.path.isabs(readme_path):
-        readme_path = os.path.join(os.getcwd(), readme_path)
-    
-    # Get formatted cost information
-    cost_info = get_formatted_cost_info(readme_path)
-    
-    # Write to output file or print to stdout
-    if args.output:
-        with open(args.output, 'w') as f:
-            f.write(cost_info)
-        print(f"Cost information written to {args.output}")
-    else:
-        print(cost_info)
+    cost_info = extract_costs_from_readme(args.readme)
+    print(cost_info)
 
 if __name__ == "__main__":
     main() 
