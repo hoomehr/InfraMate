@@ -11,10 +11,19 @@ on:
         description: 'Target branch to create PR against'
         required: true
         default: 'main'
+      should_deploy:
+        description: 'Deploy infrastructure after analysis'
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   analyze:
+    name: Generate Infrastructure
     runs-on: ubuntu-latest
+    outputs:
+      terraform_dir: ${{ steps.set_outputs.outputs.terraform_dir }}
+      pr_number: ${{ steps.create_pr.outputs.pull-request-number }}
     steps:
       - name: Checkout Inframate
         uses: actions/checkout@v4
@@ -168,58 +177,63 @@ jobs:
           echo "### Infrastructure Components" >> $GITHUB_ENV
           
           # Check for networking components
-          if [ -f "vpc.tf" ]; then
+          if [ -f "terraform/vpc.tf" ]; then
             echo "- **Networking**: VPC with public/private subnets" >> $GITHUB_ENV
           fi
           
           # Check for compute components
-          if [ -f "ec2.tf" ]; then
+          if [ -f "terraform/ec2.tf" ]; then
             echo "- **Compute**: EC2 instances with auto-scaling" >> $GITHUB_ENV
           fi
-          if [ -f "ecs.tf" ]; then
+          if [ -f "terraform/ecs.tf" ]; then
             echo "- **Compute**: ECS Fargate containers" >> $GITHUB_ENV
           fi
-          if [ -f "eks.tf" ]; then
+          if [ -f "terraform/eks.tf" ]; then
             echo "- **Compute**: Kubernetes cluster with managed node groups" >> $GITHUB_ENV
           fi
-          if [ -f "nodejs_lambda.tf" ]; then
+          if [ -f "terraform/nodejs_lambda.tf" ]; then
             echo "- **Compute**: Serverless Lambda functions" >> $GITHUB_ENV
           fi
           
           # Check for database components
-          if [ -f "database.tf" ] || [ -f "rds.tf" ]; then
+          if [ -f "terraform/database.tf" ] || [ -f "terraform/rds.tf" ]; then
             echo "- **Database**: Amazon RDS managed database" >> $GITHUB_ENV
           fi
-          if [ -f "dynamodb.tf" ]; then
+          if [ -f "terraform/dynamodb.tf" ]; then
             echo "- **Database**: DynamoDB NoSQL database" >> $GITHUB_ENV
           fi
           
           # Check for load balancing
-          if [ -f "alb.tf" ]; then
+          if [ -f "terraform/alb.tf" ]; then
             echo "- **Load Balancing**: Application Load Balancer" >> $GITHUB_ENV
           fi
           
           # Check for storage
-          if [ -f "s3.tf" ]; then
+          if [ -f "terraform/s3.tf" ]; then
             echo "- **Storage**: S3 bucket configuration" >> $GITHUB_ENV
           fi
           
           # Check for API
-          if [ -f "api_gateway.tf" ]; then
+          if [ -f "terraform/api_gateway.tf" ]; then
             echo "- **API**: API Gateway for RESTful endpoints" >> $GITHUB_ENV
           fi
           
           # Check for CDN
-          if [ -f "cloudfront.tf" ]; then
+          if [ -f "terraform/cloudfront.tf" ]; then
             echo "- **CDN**: CloudFront distribution" >> $GITHUB_ENV
           fi
           
           # Check for monitoring
-          if [ -f "cloudwatch.tf" ]; then
+          if [ -f "terraform/cloudwatch.tf" ]; then
             echo "- **Monitoring**: CloudWatch dashboards, alarms, and logging" >> $GITHUB_ENV
           fi
           
           echo "EOF" >> $GITHUB_ENV
+
+      - name: Set Outputs
+        id: set_outputs
+        run: |
+          echo "terraform_dir=terraform" >> $GITHUB_OUTPUT
 
       - name: Configure Git
         run: |
@@ -228,6 +242,7 @@ jobs:
           git config --local user.email "inframate-bot@users.noreply.github.com"
 
       - name: Create Pull Request
+        id: create_pr
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.REPO_PAT }}
@@ -260,4 +275,244 @@ jobs:
             Check out the README.md file in the terraform directory for detailed instructions.
           branch: "inframate/terraform-files"
           base: ${{ github.event.inputs.target_branch }}
-          delete-branch: true 
+          delete-branch: true
+
+      - name: Upload Terraform as Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-files
+          path: target_repo/terraform/
+          retention-days: 7
+
+  terraform-plan:
+    name: Terraform Plan
+    needs: analyze
+    runs-on: ubuntu-latest
+    if: success() && needs.analyze.outputs.pr_number
+    steps:
+      - name: Checkout PR Branch
+        uses: actions/checkout@v4
+        with:
+          ref: inframate/terraform-files
+          repository: ${{ github.event.inputs.target_repo }}
+          token: ${{ secrets.REPO_PAT }}
+          
+      - name: Download Terraform Files
+        uses: actions/download-artifact@v3
+        with:
+          name: terraform-files
+          path: terraform
+          
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.7
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+          
+      - name: Initialize Terraform
+        run: |
+          cd terraform
+          terraform init
+          
+      - name: Create tfvars File
+        run: |
+          cd terraform
+          # Create a sample tfvars file if it doesn't exist
+          if [ ! -f "terraform.tfvars" ]; then
+            echo "Creating sample terraform.tfvars file"
+            cat > terraform.tfvars << 'EOL'
+          region = "us-east-1"
+          app_name = "inframate-test-app"
+          environment = "dev"
+          # Add more variables as needed based on your infrastructure
+          EOL
+          fi
+          
+      - name: Terraform Validate
+        id: validate
+        run: |
+          cd terraform
+          terraform validate -no-color
+          
+      - name: Terraform Plan
+        id: plan
+        run: |
+          cd terraform
+          terraform plan -no-color -input=false | tee terraform_plan.txt
+        continue-on-error: true
+        
+      - name: Upload Plan Result
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-plan
+          path: terraform/terraform_plan.txt
+          
+      - name: Add Plan Output to PR
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.REPO_PAT }}
+          script: |
+            const fs = require('fs');
+            const planOutput = fs.readFileSync('terraform/terraform_plan.txt', 'utf8');
+            const limitedOutput = planOutput.length > 65000 
+              ? planOutput.substring(0, 65000) + '\n... (truncated)'
+              : planOutput;
+            
+            github.rest.issues.createComment({
+              issue_number: ${{ needs.analyze.outputs.pr_number }},
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## Terraform Plan Output\n\n\`\`\`terraform\n${limitedOutput}\n\`\`\``
+            });
+
+  terraform-test:
+    name: Terraform Security Test
+    needs: [analyze, terraform-plan]
+    runs-on: ubuntu-latest
+    if: success() && needs.analyze.outputs.pr_number
+    steps:
+      - name: Checkout PR Branch
+        uses: actions/checkout@v4
+        with:
+          ref: inframate/terraform-files
+          repository: ${{ github.event.inputs.target_repo }}
+          token: ${{ secrets.REPO_PAT }}
+          
+      - name: Download Terraform Files
+        uses: actions/download-artifact@v3
+        with:
+          name: terraform-files
+          path: terraform
+          
+      - name: Run tfsec
+        id: tfsec
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: terraform
+          format: sarif
+          out: tfsec.sarif
+        continue-on-error: true
+        
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: tfsec.sarif
+          
+      - name: Add Security Analysis Results to PR
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.REPO_PAT }}
+          script: |
+            const fs = require('fs');
+            let securityResults = '';
+            
+            try {
+              if (fs.existsSync('tfsec.sarif')) {
+                const data = JSON.parse(fs.readFileSync('tfsec.sarif', 'utf8'));
+                const results = data.runs[0].results;
+                
+                if (results.length > 0) {
+                  securityResults = `## Security Analysis Results\n\n${results.length} issues found:\n\n`;
+                  
+                  results.slice(0, 10).forEach((result, index) => {
+                    securityResults += `${index + 1}. **${result.ruleId}**: ${result.message.text}\n`;
+                    securityResults += `   - Location: ${result.locations[0].physicalLocation.artifactLocation.uri}\n`;
+                    if (result.level) securityResults += `   - Severity: ${result.level}\n`;
+                    securityResults += '\n';
+                  });
+                  
+                  if (results.length > 10) {
+                    securityResults += `\n... and ${results.length - 10} more issues.\n`;
+                  }
+                } else {
+                  securityResults = '## Security Analysis Results\n\nNo security issues found! 🎉';
+                }
+              } else {
+                securityResults = '## Security Analysis Results\n\nNo security scan output available.';
+              }
+            } catch (error) {
+              securityResults = `## Security Analysis Results\n\nError processing security results: ${error.message}`;
+            }
+            
+            github.rest.issues.createComment({
+              issue_number: ${{ needs.analyze.outputs.pr_number }},
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: securityResults
+            });
+
+  terraform-deploy:
+    name: Terraform Deploy
+    needs: [analyze, terraform-plan, terraform-test]
+    runs-on: ubuntu-latest
+    if: success() && github.event.inputs.should_deploy == 'true'
+    environment: production
+    steps:
+      - name: Checkout PR Branch
+        uses: actions/checkout@v4
+        with:
+          ref: inframate/terraform-files
+          repository: ${{ github.event.inputs.target_repo }}
+          token: ${{ secrets.REPO_PAT }}
+          
+      - name: Download Terraform Files
+        uses: actions/download-artifact@v3
+        with:
+          name: terraform-files
+          path: terraform
+          
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.7
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+          
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+          
+      - name: Initialize Terraform
+        run: |
+          cd terraform
+          terraform init
+          
+      - name: Apply Terraform Changes
+        id: apply
+        run: |
+          cd terraform
+          terraform apply -auto-approve -input=false | tee terraform_apply.txt
+          
+      - name: Upload Apply Result
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-apply
+          path: terraform/terraform_apply.txt
+          
+      - name: Add Deployment Results to PR
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.REPO_PAT }}
+          script: |
+            const fs = require('fs');
+            let applyOutput = 'No output available';
+            
+            try {
+              if (fs.existsSync('terraform/terraform_apply.txt')) {
+                applyOutput = fs.readFileSync('terraform/terraform_apply.txt', 'utf8');
+                if (applyOutput.length > 65000) {
+                  applyOutput = applyOutput.substring(0, 65000) + '\n... (truncated)';
+                }
+              }
+            } catch (error) {
+              applyOutput = `Error reading apply output: ${error.message}`;
+            }
+            
+            github.rest.issues.createComment({
+              issue_number: ${{ needs.analyze.outputs.pr_number }},
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## Terraform Deployment Results\n\n\`\`\`\n${applyOutput}\n\`\`\``
+            }); 
