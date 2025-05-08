@@ -4,7 +4,7 @@ Template manager for loading and modifying Terraform templates
 import os
 import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 class TemplateManager:
     def __init__(self):
@@ -21,6 +21,28 @@ class TemplateManager:
     def get_template(self, template_name: str) -> Optional[str]:
         """Get a specific template by name"""
         return self.templates.get(template_name)
+
+    def extract_outputs(self, template: str) -> Tuple[Set[str], str]:
+        """
+        Extract output names from a Terraform template
+        
+        Args:
+            template: Terraform template content
+            
+        Returns:
+            Tuple of (set of output names, template with outputs extracted but NOT removed)
+        """
+        output_names = set()
+        
+        # Match all output blocks to extract their names
+        output_pattern = re.compile(r'output\s+"([^"]+)"\s+{', re.DOTALL)
+        matches = output_pattern.finditer(template)
+        
+        for match in matches:
+            output_name = match.group(1)
+            output_names.add(output_name)
+        
+        return output_names, template
 
     def fix_template_issues(self, template: str) -> str:
         """Fix common issues in Terraform templates"""

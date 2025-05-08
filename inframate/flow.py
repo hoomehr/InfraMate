@@ -3,7 +3,7 @@ import os
 import sys
 import json
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Set
 import re
 
 from inframate.analyzers.repository import analyze_repository
@@ -271,30 +271,46 @@ variable "key_name" {
 }
 """
 
-def generate_outputs_tf(md_data: Dict[str, Any]) -> str:
-    """Generate outputs.tf file"""
-    return """# Outputs for Terraform configuration
-
-output "api_url" {
+def generate_outputs_tf(md_data: Dict[str, Any], exclude_outputs: Set[str] = None) -> str:
+    """Generate outputs.tf file
+    
+    Args:
+        md_data: Metadata from inframate.md
+        exclude_outputs: Set of output names to exclude (to prevent duplicates with main.tf)
+        
+    Returns:
+        String containing the outputs.tf content
+    """
+    if exclude_outputs is None:
+        exclude_outputs = set()
+    
+    # Define all possible outputs
+    all_outputs = {
+        "api_url": """output "api_url" {
   description = "URL of the API Gateway (if deployed)"
   value       = try(aws_api_gateway_deployment.api.invoke_url, "N/A")
-}
-
-output "lambda_function_name" {
+}""",
+        "lambda_function_name": """output "lambda_function_name" {
   description = "Name of the Lambda function (if deployed)"
   value       = try(aws_lambda_function.api.function_name, "N/A")
-}
-
-output "s3_bucket_name" {
+}""",
+        "s3_bucket_name": """output "s3_bucket_name" {
   description = "Name of the S3 bucket (if deployed)"
   value       = try(aws_s3_bucket.app_bucket.id, "N/A")
-}
-
-output "ec2_instance_ip" {
+}""",
+        "ec2_instance_ip": """output "ec2_instance_ip" {
   description = "IP address of the EC2 instance (if deployed)"
   value       = try(aws_instance.app_server.public_ip, "N/A")
-}
-"""
+}"""
+    }
+    
+    # Filter out excluded outputs
+    included_outputs = [output for name, output in all_outputs.items() if name not in exclude_outputs]
+    
+    if not included_outputs:
+        return "# No outputs defined that aren't already in main.tf"
+    
+    return "# Outputs for Terraform configuration\n\n" + "\n\n".join(included_outputs)
 
 def generate_tfvars(md_data: Dict[str, Any]) -> str:
     """Generate terraform.tfvars file"""
@@ -493,6 +509,9 @@ def generate_terraform_files(repo_path: str, analysis: Dict[str, Any], md_data: 
     tf_dir = os.path.join(repo_path, 'terraform')
     os.makedirs(tf_dir, exist_ok=True)
     
+    # Initialize the template manager for later use
+    template_manager = TemplateManager()
+    
     # Generate main.tf
     terraform_template = ""
     if "terraform_template" in analysis and analysis["terraform_template"]:
@@ -507,11 +526,14 @@ def generate_terraform_files(repo_path: str, analysis: Dict[str, Any], md_data: 
             services = ["EC2", "VPC", "S3", "CloudWatch"]
         
         # Use template manager to generate Terraform template
-        template_manager = TemplateManager()
         terraform_template = template_manager.get_template_for_services(services)
     
     # Perform additional validation and fixes
-    validate_terraform_template(terraform_template)
+    terraform_template = validate_terraform_template(terraform_template)
+    
+    # Extract outputs from main.tf to avoid duplication in outputs.tf
+    main_outputs, _ = template_manager.extract_outputs(terraform_template)
+    print(f"Found existing outputs in main.tf: {main_outputs}")
     
     # Write main.tf
     with open(os.path.join(tf_dir, 'main.tf'), 'w') as f:
@@ -522,8 +544,8 @@ def generate_terraform_files(repo_path: str, analysis: Dict[str, Any], md_data: 
     with open(os.path.join(tf_dir, 'variables.tf'), 'w') as f:
         f.write(variables_tf)
     
-    # Generate outputs.tf
-    outputs_tf = generate_outputs_tf(md_data)
+    # Generate outputs.tf, excluding outputs already in main.tf
+    outputs_tf = generate_outputs_tf(md_data, main_outputs)
     with open(os.path.join(tf_dir, 'outputs.tf'), 'w') as f:
         f.write(outputs_tf)
     
