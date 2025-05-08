@@ -1,0 +1,277 @@
+name: Security Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_repo:
+        description: 'Target repository to scan'
+        required: true
+        default: '.'
+      target_branch:
+        description: 'Branch to scan'
+        required: true
+        default: 'main'
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Inframate
+        uses: actions/checkout@v4
+        with:
+          path: inframate
+          
+      - name: Checkout target repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.inputs.target_repo }}
+          ref: ${{ github.event.inputs.target_branch }}
+          path: target_repo
+      
+      - name: Find Terraform files
+        id: find_tf
+        run: |
+          cd target_repo
+          echo "Scanning for Terraform files..."
+          TF_FILES=$(find . -name "*.tf" | sort)
+          
+          if [ -z "$TF_FILES" ]; then
+            echo "No Terraform files found in the repository."
+            echo "tf_found=false" >> $GITHUB_OUTPUT
+            exit 0
+          else
+            echo "Found Terraform files:"
+            echo "$TF_FILES"
+            echo "tf_found=true" >> $GITHUB_OUTPUT
+            
+            # Find the main Terraform directory
+            MAIN_TF_DIR=$(dirname $(find . -name "*.tf" | sort) | sort | uniq -c | sort -nr | head -1 | awk '{print $2}')
+            echo "main_tf_dir=$MAIN_TF_DIR" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Set up TFSec
+        if: steps.find_tf.outputs.tf_found == 'true'
+        run: |
+          curl -L "$(curl -s https://api.github.com/repos/aquasecurity/tfsec/releases/latest | grep -o -E "https://.+?tfsec-linux-amd64")" > tfsec
+          chmod +x tfsec
+          sudo mv tfsec /usr/local/bin/
+          tfsec --version
+      
+      - name: Install Checkov
+        if: steps.find_tf.outputs.tf_found == 'true'
+        run: |
+          pip install checkov
+          checkov --version
+      
+      - name: Run TFSec Security Scan
+        if: steps.find_tf.outputs.tf_found == 'true'
+        id: tfsec
+        run: |
+          cd target_repo
+          MAIN_TF_DIR=$(cat $GITHUB_OUTPUT | grep main_tf_dir | cut -d= -f2)
+          
+          echo "Scanning directory: $MAIN_TF_DIR"
+          mkdir -p security_reports
+          
+          # Run TFSec
+          if [ -d "$MAIN_TF_DIR" ]; then
+            tfsec "$MAIN_TF_DIR" --format json > security_reports/tfsec_report.json || true
+            tfsec "$MAIN_TF_DIR" --format markdown > security_reports/tfsec_report.md || true
+          else
+            tfsec . --format json > security_reports/tfsec_report.json || true
+            tfsec . --format markdown > security_reports/tfsec_report.md || true
+          fi
+          
+          # Create summary
+          ISSUE_COUNT=$(cat security_reports/tfsec_report.json | grep -o '"results":\[[^]]*\]' | grep -o 'severity' | wc -l)
+          echo "tfsec_issues=$ISSUE_COUNT" >> $GITHUB_OUTPUT
+          
+          # Generate HTML report for better visualization
+          echo "<html><head><title>TFSec Security Report</title>" > security_reports/tfsec_report.html
+          echo "<style>body{font-family:Arial,sans-serif;margin:20px}h1{color:#333}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:8px;border:1px solid #ddd}th{background-color:#f2f2f2}tr:nth-child(even){background-color:#f9f9f9}.critical{background-color:#ffdddd}.high{background-color:#ffffcc}.medium{background-color:#e6f3ff}.low{background-color:#eaffea}</style>" >> security_reports/tfsec_report.html
+          echo "</head><body><h1>TFSec Security Scan Results</h1>" >> security_reports/tfsec_report.html
+          
+          # Convert markdown to HTML table
+          echo "<h2>Found $ISSUE_COUNT potential security issues</h2>" >> security_reports/tfsec_report.html
+          
+          if [ "$ISSUE_COUNT" -gt 0 ]; then
+            echo "<table><tr><th>Rule ID</th><th>Severity</th><th>Description</th><th>Location</th></tr>" >> security_reports/tfsec_report.html
+            
+            # Parse JSON and create table rows
+            cat security_reports/tfsec_report.json | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for result in data.get('results', []):
+    severity = result.get('severity', 'unknown').lower()
+    rule_id = result.get('rule_id', 'unknown')
+    description = result.get('description', 'No description')
+    location = f\"{result.get('location', {}).get('filename', 'unknown')}:{result.get('location', {}).get('start_line', 0)}\"
+    print(f'<tr class=\"{severity}\"><td>{rule_id}</td><td>{severity.upper()}</td><td>{description}</td><td>{location}</td></tr>')
+            " >> security_reports/tfsec_report.html || echo "<tr><td colspan='4'>Error parsing JSON results</td></tr>" >> security_reports/tfsec_report.html
+            
+            echo "</table>" >> security_reports/tfsec_report.html
+          else
+            echo "<p>No security issues found by TFSec! 🎉</p>" >> security_reports/tfsec_report.html
+          fi
+          
+          echo "</body></html>" >> security_reports/tfsec_report.html
+          
+          echo "TFSec scan completed. Found $ISSUE_COUNT issues."
+      
+      - name: Run Checkov Security Scan
+        if: steps.find_tf.outputs.tf_found == 'true'
+        id: checkov
+        run: |
+          cd target_repo
+          MAIN_TF_DIR=$(cat $GITHUB_OUTPUT | grep main_tf_dir | cut -d= -f2)
+          
+          echo "Scanning directory: $MAIN_TF_DIR"
+          mkdir -p security_reports
+          
+          # Run Checkov
+          if [ -d "$MAIN_TF_DIR" ]; then
+            checkov -d "$MAIN_TF_DIR" -o json > security_reports/checkov_report.json || true
+            checkov -d "$MAIN_TF_DIR" -o cli > security_reports/checkov_report.txt || true
+          else
+            checkov -d . -o json > security_reports/checkov_report.json || true
+            checkov -d . -o cli > security_reports/checkov_report.txt || true
+          fi
+          
+          # Create summary
+          FAILED_CHECKS=$(cat security_reports/checkov_report.json | grep -o '"check_id"' | wc -l)
+          echo "checkov_issues=$FAILED_CHECKS" >> $GITHUB_OUTPUT
+          
+          # Generate HTML report
+          echo "<html><head><title>Checkov Security Report</title>" > security_reports/checkov_report.html
+          echo "<style>body{font-family:Arial,sans-serif;margin:20px}h1{color:#333}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:8px;border:1px solid #ddd}th{background-color:#f2f2f2}tr:nth-child(even){background-color:#f9f9f9}.failed{background-color:#ffdddd}.passed{background-color:#eaffea}</style>" >> security_reports/checkov_report.html
+          echo "</head><body><h1>Checkov Security Scan Results</h1>" >> security_reports/checkov_report.html
+          
+          echo "<h2>Found $FAILED_CHECKS potential security issues</h2>" >> security_reports/checkov_report.html
+          
+          if [ "$FAILED_CHECKS" -gt 0 ]; then
+            echo "<table><tr><th>Check ID</th><th>Status</th><th>Description</th><th>Resource</th><th>File</th></tr>" >> security_reports/checkov_report.html
+            
+            # Parse JSON and create table rows
+            cat security_reports/checkov_report.json | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for result in data.get('results', {}).get('failed_checks', []):
+    check_id = result.get('check_id', 'unknown')
+    check_name = result.get('check_name', 'No description')
+    resource = result.get('resource', 'unknown')
+    file_path = result.get('file_path', 'unknown')
+    print(f'<tr class=\"failed\"><td>{check_id}</td><td>FAILED</td><td>{check_name}</td><td>{resource}</td><td>{file_path}</td></tr>')
+            " >> security_reports/checkov_report.html || echo "<tr><td colspan='5'>Error parsing JSON results</td></tr>" >> security_reports/checkov_report.html
+            
+            echo "</table>" >> security_reports/checkov_report.html
+          else
+            echo "<p>No security issues found by Checkov! 🎉</p>" >> security_reports/checkov_report.html
+          fi
+          
+          echo "</body></html>" >> security_reports/checkov_report.html
+          
+          echo "Checkov scan completed. Found $FAILED_CHECKS issues."
+
+      - name: Create Security Report
+        if: steps.find_tf.outputs.tf_found == 'true'
+        run: |
+          cd target_repo
+          MAIN_TF_DIR=$(cat $GITHUB_OUTPUT | grep main_tf_dir | cut -d= -f2)
+          TFSEC_ISSUES=$(cat $GITHUB_OUTPUT | grep tfsec_issues | cut -d= -f2 || echo "0")
+          CHECKOV_ISSUES=$(cat $GITHUB_OUTPUT | grep checkov_issues | cut -d= -f2 || echo "0")
+          TOTAL_ISSUES=$((TFSEC_ISSUES + CHECKOV_ISSUES))
+          
+          # Create markdown report
+          cat > security_reports/SECURITY_REPORT.md << EOF
+# Security Scan Report
+
+## Summary
+- **Total Issues Found**: ${TOTAL_ISSUES}
+- **TFSec Issues**: ${TFSEC_ISSUES}
+- **Checkov Issues**: ${CHECKOV_ISSUES}
+
+## Detailed Reports
+- [TFSec Report](tfsec_report.md)
+- [Checkov Report](checkov_report.txt)
+
+## Recommendations
+EOF
+          
+          # Add recommendations based on common findings
+          if [ $TOTAL_ISSUES -gt 0 ]; then
+            cat >> security_reports/SECURITY_REPORT.md << EOF
+### General Security Recommendations
+- Encrypt sensitive data at rest and in transit
+- Use IAM roles with least privilege access
+- Enable logging and monitoring for all resources
+- Implement network security groups with restrictive rules
+- Use secure defaults for all resources
+
+### Common Issues to Fix
+EOF
+            
+            # Extract common issues from TFSec
+            if [ $TFSEC_ISSUES -gt 0 ]; then
+              echo "#### TFSec Findings" >> security_reports/SECURITY_REPORT.md
+              cat security_reports/tfsec_report.md | grep -o '\*\*Description\*\*: .*' | sed 's/\*\*Description\*\*: /- /' | sort | uniq | head -10 >> security_reports/SECURITY_REPORT.md
+            fi
+            
+            # Extract common issues from Checkov
+            if [ $CHECKOV_ISSUES -gt 0 ]; then
+              echo "#### Checkov Findings" >> security_reports/SECURITY_REPORT.md
+              cat security_reports/checkov_report.txt | grep 'Check:' | sed 's/Check: /- /' | sort | uniq | head -10 >> security_reports/SECURITY_REPORT.md
+            fi
+          else
+            cat >> security_reports/SECURITY_REPORT.md << EOF
+🎉 No security issues found! Keep up the good work!
+
+### Proactive Security Recommendations
+- Regularly update your providers and modules
+- Implement infrastructure security scanning in your CI/CD pipeline
+- Review IAM permissions regularly and follow least privilege principle
+- Enable encryption and logging across all services
+- Use Terraform modules from trusted sources
+EOF
+          fi
+          
+          # Copy report to the main directory if it's not the same as the current directory
+          if [ "$MAIN_TF_DIR" != "." ] && [ -d "$MAIN_TF_DIR" ]; then
+            mkdir -p "${MAIN_TF_DIR}/security"
+            cp -r security_reports/* "${MAIN_TF_DIR}/security/"
+          fi
+          
+          echo "Security report generated."
+      
+      - name: Create Pull Request
+        if: steps.find_tf.outputs.tf_found == 'true'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.REPO_PAT }}
+          path: target_repo
+          commit-message: "Add Infrastructure Security Scan Report"
+          title: "🔒 Security Scan: Infrastructure Security Report"
+          body: |
+            # 🔒 Infrastructure Security Scan
+            
+            This PR adds a security scan report for your Terraform infrastructure.
+            
+            ## Summary
+            - **TFSec Issues**: ${{ steps.tfsec.outputs.tfsec_issues || '0' }}
+            - **Checkov Issues**: ${{ steps.checkov.outputs.checkov_issues || '0' }}
+            
+            ## What's included
+            - Comprehensive security scan report
+            - Issues identified with their severity levels
+            - Recommendations for improving security
+            
+            Please review the `security_reports/SECURITY_REPORT.md` file for detailed information.
+          branch: "inframate/security-scan"
+          base: ${{ github.event.inputs.target_branch }}
+      
+      - name: Upload Security Reports
+        if: steps.find_tf.outputs.tf_found == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: target_repo/security_reports/
+          retention-days: 7 
