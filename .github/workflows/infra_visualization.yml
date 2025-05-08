@@ -76,12 +76,12 @@ jobs:
 
       - name: Generate Infrastructure Visualization
         if: steps.find_tf.outputs.tf_found == 'true'
+        env:
+          MAIN_TF_DIR: ${{ steps.find_tf.outputs.main_tf_dir }}
         run: |
           cd target_repo
-          # Access the output variable using the ${{ }} syntax - this is properly injected by GitHub Actions
-          MAIN_TF_DIR="${{ steps.find_tf.outputs.main_tf_dir }}"
           
-          # If main_tf_dir is empty, default to the current directory
+          # Access the output variable from environment variable
           if [ -z "$MAIN_TF_DIR" ]; then
             MAIN_TF_DIR="."
           fi
