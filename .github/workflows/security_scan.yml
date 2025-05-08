@@ -195,23 +195,84 @@ jobs:
           # Install required packages
           pip install google-generativeai python-dotenv
           
+          cd target_repo
+          
+          # Check if reports exist
+          if [ ! -f "security_reports/tfsec_report.md" ] || [ ! -f "security_reports/checkov_report.txt" ]; then
+            echo "Warning: Security reports not found. Cannot generate AI analysis."
+            touch security_reports/AI_SECURITY_ANALYSIS.md
+            echo "# Security Analysis Unavailable\n\nUnable to generate AI security analysis due to missing security reports." > security_reports/AI_SECURITY_ANALYSIS.md
+            exit 0
+          fi
+          
+          # Create a simple text file with all findings for Gemini
+          echo "# TFSec Findings" > security_reports/all_findings.txt
+          cat security_reports/tfsec_report.md >> security_reports/all_findings.txt
+          echo "\n\n# Checkov Findings" >> security_reports/all_findings.txt
+          cat security_reports/checkov_report.txt >> security_reports/all_findings.txt
+          
           # Run the AI analysis if API key is available
           if [ -n "$GEMINI_API_KEY" ] || [ -n "$GOOGLE_API_KEY" ]; then
             echo "Generating AI-powered security analysis..."
-            python3 scripts/gemini_security_analyzer.py \
-              --tfsec-report="target_repo/security_reports/tfsec_report.md" \
-              --checkov-report="target_repo/security_reports/checkov_report.txt" \
-              --tf-directory="target_repo" \
-              --output="target_repo/security_reports/AI_SECURITY_ANALYSIS.md"
             
-            # Check if analysis was generated
-            if [ -f "target_repo/security_reports/AI_SECURITY_ANALYSIS.md" ]; then
+            # Use cat to debug file content
+            echo "TFSec report content:"
+            cat security_reports/tfsec_report.md | head -20
+            echo "Checkov report content:"
+            cat security_reports/checkov_report.txt | head -20
+            
+            # Run gemini_security_analyzer with proper paths
+            python3 ../scripts/gemini_security_analyzer.py \
+              --tfsec-report="security_reports/tfsec_report.md" \
+              --checkov-report="security_reports/checkov_report.txt" \
+              --tf-directory="." \
+              --output="security_reports/AI_SECURITY_ANALYSIS.md"
+            
+            # Check if analysis was generated successfully
+            if [ -f "security_reports/AI_SECURITY_ANALYSIS.md" ] && [ -s "security_reports/AI_SECURITY_ANALYSIS.md" ]; then
               echo "AI security analysis generated successfully"
+              # Print first few lines of the analysis for verification
+              echo "First few lines of AI analysis:"
+              head -10 security_reports/AI_SECURITY_ANALYSIS.md
             else
-              echo "Failed to generate AI security analysis"
+              echo "Failed to generate AI security analysis or file is empty"
+              # Create a fallback analysis file with basic recommendations
+              cat > security_reports/AI_SECURITY_ANALYSIS.md << EOF
+# AI Security Analysis
+
+*Note: The automatic AI analysis could not be generated. Here are some general security recommendations:*
+
+## General Security Best Practices
+
+1. **Use IAM roles with least privilege access**
+   - Restrict permissions to only what is necessary
+   - Regularly review and audit permissions
+
+2. **Encrypt sensitive data**
+   - Use AWS KMS for managing encryption keys
+   - Enable encryption at rest for all data stores
+   - Enable encryption in transit
+
+3. **Network Security**
+   - Use security groups with restrictive inbound/outbound rules
+   - Implement network ACLs for additional security
+   - Use private subnets for sensitive resources
+
+4. **Logging and Monitoring**
+   - Enable CloudTrail for API logging
+   - Set up CloudWatch alarms for suspicious activities
+   - Implement centralized logging
+
+5. **Resource Configuration**
+   - Disable public access where not needed
+   - Use secure TLS versions
+   - Keep software and dependencies updated
+EOF
             fi
           else
             echo "Skipping AI analysis - No Gemini API key found"
+            # Create a notice file
+            echo "# AI Security Analysis Unavailable\n\nAI-powered security analysis was skipped because no Gemini API key was provided." > security_reports/AI_SECURITY_ANALYSIS.md
           fi
 
       - name: Create Pull Request
