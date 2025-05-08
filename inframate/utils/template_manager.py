@@ -44,6 +44,123 @@ class TemplateManager:
         
         return output_names, template
 
+    def _convert_asg_tags(self, resource_part, tags_content, closing_part):
+        """
+        Convert AWS autoscaling group tags from list format to tag blocks
+        
+        Args:
+            resource_part: The part of the resource before the tags
+            tags_content: The content of the tags list
+            closing_part: The closing part of the resource after the tags
+            
+        Returns:
+            Updated resource definition with tag blocks instead of tag format
+        """
+        # Regular expressions to extract key-value pairs from different tag formats
+        tag_pairs = []
+        
+        # Look for {key = "name", value = "example", propagate_at_launch = true} format
+        map_pattern = re.compile(r'{[^}]*?key\s*=\s*"([^"]+)"[^}]*?value\s*=\s*"([^"]+)"[^}]*?}', re.DOTALL)
+        for match in map_pattern.finditer(tags_content):
+            key = match.group(1)
+            value = match.group(2)
+            tag_pairs.append((key, value))
+        
+        # If no tags were found in map format, look for regular key-value format
+        if not tag_pairs:
+            key_value_pattern = re.compile(r'(?:{\s*|\s+)([a-zA-Z0-9_-]+)\s*=\s*"([^"]+)"', re.DOTALL)
+            for match in key_value_pattern.finditer(tags_content):
+                key = match.group(1)
+                value = match.group(2)
+                tag_pairs.append((key, value))
+        
+        # Build the new resource with tag blocks
+        result = resource_part
+        
+        # Add tags as tag blocks
+        for key, value in tag_pairs:
+            result += f"""
+  tag {{
+    key                 = "{key}"
+    value               = "{value}"
+    propagate_at_launch = true
+  }}"""
+        
+        result += closing_part
+        return result
+
+    def _add_launch_configuration(self, template: str) -> str:
+        """
+        Add aws_launch_configuration if it's referenced but not defined
+        
+        Args:
+            template: Terraform template content
+            
+        Returns:
+            Template with added launch configuration if needed
+        """
+        # Check if launch_configuration is referenced
+        if "launch_configuration = aws_launch_configuration.launch_config.id" in template:
+            # Check if it's already defined
+            if not re.search(r'resource\s+"aws_launch_configuration"\s+"launch_config"\s+{', template):
+                # Add the resource
+                launch_config = """
+# Default launch configuration for autoscaling groups
+resource "aws_launch_configuration" "launch_config" {
+  name_prefix                 = "app-"
+  image_id                    = var.ami_id
+  instance_type               = var.instance_type
+  security_groups             = [aws_security_group.app_sg.id]
+  associate_public_ip_address = true
+  
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+"""
+                # Check if a security group is defined, if not add one
+                if not re.search(r'resource\s+"aws_security_group"\s+"app_sg"\s+{', template):
+                    launch_config = """
+# Default security group for instances
+resource "aws_security_group" "app_sg" {
+  name        = "app-sg"
+  description = "Security group for application instances"
+  
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "SSH access"
+  }
+  
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTP access"
+  }
+  
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow all outbound traffic"
+  }
+}
+""" + launch_config
+                
+                # Add the resources after the provider block
+                template = re.sub(
+                    r'(provider\s+"aws"\s+{[^}]*})',
+                    r'\1\n' + launch_config,
+                    template
+                )
+                
+        return template
+
     def fix_template_issues(self, template: str) -> str:
         """Fix common issues in Terraform templates"""
         # Fix network_interface vs network_interfaces block issue in launch_template
@@ -98,6 +215,33 @@ class TemplateManager:
             template,
             flags=re.DOTALL | re.MULTILINE
         )
+        
+        # Fix autoscaling group tags format - convert from tags list to tag blocks
+        template = re.sub(
+            r'(resource\s+"aws_autoscaling_group"\s+"[^"]+"\s+{[^}]*?)\s+tags\s+=\s+\[(.*?)\s*\](.*?})',
+            lambda m: self._convert_asg_tags(m.group(1), m.group(2), m.group(3)),
+            template,
+            flags=re.DOTALL
+        )
+        
+        # Fix missing capacity parameters for ASG
+        template = re.sub(
+            r'(resource\s+"aws_autoscaling_group"\s+"[^"]+"\s+{[^}]*?)(?!.*min_size\s*=)(.*?)(^\s*})',
+            r'\1  min_size = 1\n  max_size = 3\n  desired_capacity = 1\n\2\3',
+            template,
+            flags=re.DOTALL | re.MULTILINE
+        )
+        
+        # Fix missing launch_configuration/launch_template in ASG
+        template = re.sub(
+            r'(resource\s+"aws_autoscaling_group"\s+"[^"]+"\s+{[^}]*?)(?!.*launch_configuration\s*=|.*launch_template\s*{)(.*?)(^\s*})',
+            r'\1  launch_configuration = aws_launch_configuration.launch_config.id\n\2\3',
+            template,
+            flags=re.DOTALL | re.MULTILINE
+        )
+        
+        # Add required resources if needed (like launch_configuration)
+        template = self._add_launch_configuration(template)
         
         # Ensure all referenced resources in outputs have try() functions
         template = re.sub(
