@@ -154,22 +154,14 @@ jobs:
           TFSEC_ISSUES=${TFSEC_ISSUES:-0}
           CHECKOV_ISSUES=${CHECKOV_ISSUES:-0}
           
+          # Create initial security report (without AI analysis)
           cd security_reports
-          
-          # Generate report using external script
           chmod +x ../../scripts/create_summary.sh
           echo "Debug: Running script with: $TFSEC_ISSUES $CHECKOV_ISSUES SECURITY_REPORT.md"
           ../../scripts/create_summary.sh "$TFSEC_ISSUES" "$CHECKOV_ISSUES" "SECURITY_REPORT.md"
-          
           cd ..
           
-          # Copy report to the main directory if it's not the same as the current directory
-          if [ "$MAIN_TF_DIR" != "." ] && [ -d "$MAIN_TF_DIR" ]; then
-            mkdir -p "${MAIN_TF_DIR}/security"
-            cp -r security_reports/* "${MAIN_TF_DIR}/security/"
-          fi
-          
-          echo "Security report generated."
+          echo "Initial security report generated."
       
       - name: Generate AI Security Analysis
         if: steps.find_tf.outputs.tf_found == 'true'
@@ -192,21 +184,42 @@ jobs:
             exit 0
           fi
           
-          # Create a simple text file with all findings for Gemini
-          echo "# TFSec Findings" > security_reports/all_findings.txt
+          # Create a more comprehensive text file with all findings for Gemini
+          echo "# Security Scan Findings" > security_reports/all_findings.txt
+          echo "## TFSec Findings" >> security_reports/all_findings.txt
           cat security_reports/tfsec_report.md >> security_reports/all_findings.txt
-          echo "\n\n# Checkov Findings" >> security_reports/all_findings.txt
+          echo "" >> security_reports/all_findings.txt
+          echo "## Checkov Findings" >> security_reports/all_findings.txt
           cat security_reports/checkov_report.txt >> security_reports/all_findings.txt
+          
+          # Also include sample Terraform files if they exist
+          if [ -d "$MAIN_TF_DIR" ] && [ "$(find $MAIN_TF_DIR -name "*.tf" | head -1)" != "" ]; then
+            echo "" >> security_reports/all_findings.txt
+            echo "## Sample Terraform Files" >> security_reports/all_findings.txt
+            
+            # Include up to 3 Terraform files
+            COUNT=0
+            for tf_file in $(find $MAIN_TF_DIR -name "*.tf" | head -3); do
+              echo "" >> security_reports/all_findings.txt
+              echo "### File: $(basename $tf_file)" >> security_reports/all_findings.txt
+              echo '```hcl' >> security_reports/all_findings.txt
+              cat $tf_file >> security_reports/all_findings.txt
+              echo '```' >> security_reports/all_findings.txt
+              COUNT=$((COUNT+1))
+            done
+            
+            echo "Included $COUNT sample Terraform files for AI analysis"
+          fi
           
           # Run the AI analysis if API key is available
           if [ -n "$GEMINI_API_KEY" ] || [ -n "$GOOGLE_API_KEY" ]; then
             echo "Generating AI-powered security analysis..."
             
             # Use cat to debug file content
-            echo "TFSec report content:"
-            cat security_reports/tfsec_report.md | head -20
-            echo "Checkov report content:"
-            cat security_reports/checkov_report.txt | head -20
+            echo "TFSec report content sample:"
+            head -20 security_reports/tfsec_report.md
+            echo "Checkov report content sample:"
+            head -20 security_reports/checkov_report.txt
             
             # Run gemini_security_analyzer with proper paths
             python3 ../scripts/gemini_security_analyzer.py \
@@ -220,7 +233,12 @@ jobs:
               echo "AI security analysis generated successfully"
               # Print first few lines of the analysis for verification
               echo "First few lines of AI analysis:"
-              head -10 security_reports/AI_SECURITY_ANALYSIS.md
+              head -20 security_reports/AI_SECURITY_ANALYSIS.md
+              
+              # For debugging in PR comments
+              echo "::group::AI Security Analysis Preview"
+              head -50 security_reports/AI_SECURITY_ANALYSIS.md
+              echo "::endgroup::"
             else
               echo "Failed to generate AI security analysis or file is empty"
               # Create a fallback analysis file with basic recommendations
@@ -231,6 +249,61 @@ jobs:
             # Create a notice file
             cp ../../scripts/missing_api_key.md security_reports/AI_SECURITY_ANALYSIS.md
           fi
+
+      - name: Extract AI Summary for PR
+        if: steps.find_tf.outputs.tf_found == 'true'
+        id: extract_ai_summary
+        run: |
+          if [ -f "target_repo/security_reports/AI_SECURITY_ANALYSIS.md" ]; then
+            # Extract the first 10 lines of actual content (skip title)
+            SUMMARY=$(tail -n +3 target_repo/security_reports/AI_SECURITY_ANALYSIS.md | head -10)
+            # Escape any special characters for GitHub Actions
+            SUMMARY="${SUMMARY//'%'/'%25'}"
+            SUMMARY="${SUMMARY//$'\n'/'%0A'}"
+            SUMMARY="${SUMMARY//$'\r'/'%0D'}"
+            echo "ai_summary=$SUMMARY" >> $GITHUB_OUTPUT
+            echo "AI summary extracted for PR description"
+          else
+            echo "ai_summary=AI security analysis not available." >> $GITHUB_OUTPUT
+            echo "AI summary not available"
+          fi
+
+      - name: Regenerate Security Report with AI Analysis
+        if: steps.find_tf.outputs.tf_found == 'true'
+        run: |
+          cd target_repo
+          MAIN_TF_DIR=$(cat $GITHUB_OUTPUT | grep main_tf_dir | cut -d= -f2)
+          
+          # Get issue counts from files
+          if [ -f "security_reports/tfsec_issues.txt" ]; then
+            TFSEC_ISSUES=$(cat security_reports/tfsec_issues.txt | cut -d= -f2)
+          else
+            TFSEC_ISSUES=$(cat $GITHUB_OUTPUT | grep tfsec_issues | cut -d= -f2 || echo "0")
+          fi
+          
+          if [ -f "security_reports/checkov_issues.txt" ]; then
+            CHECKOV_ISSUES=$(cat security_reports/checkov_issues.txt | cut -d= -f2)
+          else
+            CHECKOV_ISSUES=$(cat $GITHUB_OUTPUT | grep checkov_issues | cut -d= -f2 || echo "0")
+          fi
+          
+          # Ensure variables have values
+          TFSEC_ISSUES=${TFSEC_ISSUES:-0}
+          CHECKOV_ISSUES=${CHECKOV_ISSUES:-0}
+          
+          # Now regenerate security report with AI analysis included
+          cd security_reports
+          chmod +x ../../scripts/create_summary.sh
+          ../../scripts/create_summary.sh "$TFSEC_ISSUES" "$CHECKOV_ISSUES" "SECURITY_REPORT.md"
+          cd ..
+          
+          # Copy report to the main directory if it's not the same as the current directory
+          if [ "$MAIN_TF_DIR" != "." ] && [ -d "$MAIN_TF_DIR" ]; then
+            mkdir -p "${MAIN_TF_DIR}/security"
+            cp -r security_reports/* "${MAIN_TF_DIR}/security/"
+          fi
+          
+          echo "Final security report generated with AI analysis."
 
       - name: Create Pull Request
         if: steps.find_tf.outputs.tf_found == 'true'
@@ -245,17 +318,32 @@ jobs:
             
             This PR adds a security scan report for your Terraform infrastructure.
             
-            ## Summary
+            ## AI-Powered Security Analysis
+            
+            The scan includes an AI-powered security analysis generated by Google Gemini. The AI has analyzed your Terraform files and security findings to provide actionable recommendations.
+            
+            <details>
+            <summary>View AI Analysis Preview</summary>
+            
+            ```markdown
+            <!-- First 10 lines of AI analysis will be shown here -->
+            ${{ steps.extract_ai_summary.outputs.ai_summary }}
+            ```
+            
+            View the full analysis in `security_reports/AI_SECURITY_ANALYSIS.md`.
+            </details>
+            
+            ## Security Scan Summary
             - **TFSec Issues**: ${{ steps.tfsec.outputs.tfsec_issues || '0' }}
             - **Checkov Issues**: ${{ steps.checkov.outputs.checkov_issues || '0' }}
             
             ## What's included
             - Comprehensive security scan report
             - Issues identified with their severity levels
-            - Recommendations for improving security
-            - AI-powered security analysis with actionable advice
+            - AI-powered security recommendations
+            - Actionable advice to improve your infrastructure security
             
-            Please review the `security_reports/SECURITY_REPORT.md` and `security_reports/AI_SECURITY_ANALYSIS.md` files for detailed information.
+            Please review the `security_reports/SECURITY_REPORT.md` file for detailed information.
           branch: "inframate/security-scan"
           base: ${{ github.event.inputs.target_branch }}
       

@@ -62,19 +62,41 @@ def analyze_security_results(model, content):
         return "Error: Gemini API not properly configured."
     
     prompt = f"""
-You are a highly skilled AWS security expert and Terraform specialist. Analyze the following security scan results and provide detailed, specific recommendations.
+You are a highly skilled AWS security expert and Terraform specialist. Analyze the following security scan results and provide detailed, specific recommendations. Your goal is to help improve the infrastructure security posture.
 
 SECURITY SCAN RESULTS:
 {content}
 
-Please provide:
-1. A comprehensive security assessment of the Terraform infrastructure based on the scan results
-2. Prioritized list of critical issues to fix immediately (with specific code examples of both problematic and fixed code)
-3. Medium and low priority issues that should be addressed
-4. Best practices recommendations for secure AWS infrastructure
-5. Specific steps to implement a more secure infrastructure as code approach
+Please provide a comprehensive security analysis with the following sections:
 
-Format your response in markdown with clear sections and actionable advice.
+1. **Executive Summary**:
+   - A concise overview of the key security findings (1-2 paragraphs)
+   - Severity assessment (Critical, High, Medium, Low)
+   - Overall risk assessment
+
+2. **Critical Issues** (if any):
+   - Detailed explanation of each critical security issue
+   - Specific code examples showing both problematic code and corrected code
+   - Potential impact if not addressed
+   - Step-by-step remediation instructions
+
+3. **High and Medium Priority Issues**:
+   - Categorized list of important but non-critical issues
+   - Brief explanation of each issue and its security implications
+   - Recommended fixes with specific AWS best practices
+
+4. **General Security Recommendations**:
+   - AWS infrastructure security best practices relevant to this codebase
+   - Architectural improvements to enhance security posture
+   - Specific IAM role and permissions recommendations
+   - Encryption and network security recommendations
+
+5. **Implementation Plan**:
+   - Prioritized roadmap for addressing findings
+   - Suggested security monitoring improvements
+   - Recommendations for ongoing security assessments
+
+Format your response in markdown with clear sections and headings. Be specific, actionable, and reference exact resources from the provided Terraform code when possible. Ensure your recommendations follow AWS Well-Architected Framework security best practices.
 """
 
     try:
@@ -92,8 +114,24 @@ def main(tfsec_report_path, checkov_report_path, tf_directory, output_file):
     
     # Get report content
     content = get_report_content(tfsec_report_path, checkov_report_path, tf_directory)
+    
+    # Try to find all_findings.txt which might have more context
+    all_findings_path = None
+    if tfsec_report_path:
+        all_findings_dir = os.path.dirname(tfsec_report_path)
+        all_findings_path = os.path.join(all_findings_dir, "all_findings.txt")
+    
+    # If all_findings.txt exists, use it instead as it has more comprehensive data
+    if all_findings_path and os.path.exists(all_findings_path):
+        print(f"Found comprehensive findings file: {all_findings_path}")
+        with open(all_findings_path, 'r') as f:
+            content = f.read()
+    
     if not content:
         print("No security reports or Terraform files found. Cannot generate AI analysis.")
+        with open(output_file, "w") as f:
+            f.write("# AI-Powered Security Analysis\n\n")
+            f.write("*Unable to generate analysis: No security reports or Terraform files found.*\n")
         sys.exit(1)
     
     # Analyze security results
