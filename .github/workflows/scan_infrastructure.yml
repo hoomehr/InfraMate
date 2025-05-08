@@ -118,11 +118,15 @@ jobs:
           import os
           import sys
           import google.generativeai as genai
+          from dotenv import load_dotenv
+          
+          # Load environment variables from .env file
+          load_dotenv()
           
           # Set up Gemini API
-          api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+          api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
           if not api_key:
-              print("Error: GEMINI_API_KEY environment variable not set")
+              print("Error: GEMINI_API_KEY or GOOGLE_API_KEY environment variable not set")
               sys.exit(1)
           
           genai.configure(api_key=api_key)
@@ -165,7 +169,7 @@ jobs:
           ' > scripts/analyze.py
           
           # Run analysis if API key is available
-          if [ -n "$GEMINI_API_KEY" ]; then
+          if [ -n "$GEMINI_API_KEY" ] || [ -n "$GOOGLE_API_KEY" ]; then
             python scripts/analyze.py
           else
             # Fallback to static analysis if no API key
