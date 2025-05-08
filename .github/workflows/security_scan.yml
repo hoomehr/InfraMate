@@ -49,19 +49,22 @@ jobs:
             echo "main_tf_dir=$MAIN_TF_DIR" >> $GITHUB_OUTPUT
           fi
       
-      - name: Set up TFSec
+      - name: Set up security scanning tools
         if: steps.find_tf.outputs.tf_found == 'true'
         run: |
+          # Install TFSec
           curl -L "$(curl -s https://api.github.com/repos/aquasecurity/tfsec/releases/latest | grep -o -E "https://.+?tfsec-linux-amd64")" > tfsec
           chmod +x tfsec
           sudo mv tfsec /usr/local/bin/
           tfsec --version
-      
-      - name: Install Checkov
-        if: steps.find_tf.outputs.tf_found == 'true'
-        run: |
+          
+          # Install Checkov
           pip install checkov
           checkov --version
+          
+          # Copy security scripts
+          mkdir -p scripts
+          cp inframate/scripts/security/*.py scripts/
       
       - name: Run TFSec Security Scan
         if: steps.find_tf.outputs.tf_found == 'true'
@@ -86,37 +89,8 @@ jobs:
           ISSUE_COUNT=$(cat security_reports/tfsec_report.json | grep -o '"results":\[[^]]*\]' | grep -o 'severity' | wc -l)
           echo "tfsec_issues=$ISSUE_COUNT" >> $GITHUB_OUTPUT
           
-          # Generate HTML report for better visualization
-          echo "<html><head><title>TFSec Security Report</title>" > security_reports/tfsec_report.html
-          echo "<style>body{font-family:Arial,sans-serif;margin:20px}h1{color:#333}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:8px;border:1px solid #ddd}th{background-color:#f2f2f2}tr:nth-child(even){background-color:#f9f9f9}.critical{background-color:#ffdddd}.high{background-color:#ffffcc}.medium{background-color:#e6f3ff}.low{background-color:#eaffea}</style>" >> security_reports/tfsec_report.html
-          echo "</head><body><h1>TFSec Security Scan Results</h1>" >> security_reports/tfsec_report.html
-          
-          # Convert markdown to HTML table
-          echo "<h2>Found $ISSUE_COUNT potential security issues</h2>" >> security_reports/tfsec_report.html
-          
-          if [ "$ISSUE_COUNT" -gt 0 ]; then
-            echo "<table><tr><th>Rule ID</th><th>Severity</th><th>Description</th><th>Location</th></tr>" >> security_reports/tfsec_report.html
-            
-            # Parse JSON and create table rows
-            cat > /tmp/tfsec_parse.py << 'EOF_PYTHON'
-import json, sys
-data = json.load(sys.stdin)
-for result in data.get('results', []):
-    severity = result.get('severity', 'unknown').lower()
-    rule_id = result.get('rule_id', 'unknown')
-    description = result.get('description', 'No description')
-    location = f"{result.get('location', {}).get('filename', 'unknown')}:{result.get('location', {}).get('start_line', 0)}"
-    print(f'<tr class="{severity}"><td>{rule_id}</td><td>{severity.upper()}</td><td>{description}</td><td>{location}</td></tr>')
-EOF_PYTHON
-            
-            cat security_reports/tfsec_report.json | python3 /tmp/tfsec_parse.py >> security_reports/tfsec_report.html || echo "<tr><td colspan='4'>Error parsing JSON results</td></tr>" >> security_reports/tfsec_report.html
-            
-            echo "</table>" >> security_reports/tfsec_report.html
-          else
-            echo "<p>No security issues found by TFSec! 🎉</p>" >> security_reports/tfsec_report.html
-          fi
-          
-          echo "</body></html>" >> security_reports/tfsec_report.html
+          # Generate HTML report
+          python3 ../scripts/tfsec_parser.py --json security_reports/tfsec_report.json --html security_reports/tfsec_report.html
           
           echo "TFSec scan completed. Found $ISSUE_COUNT issues."
       
@@ -144,35 +118,7 @@ EOF_PYTHON
           echo "checkov_issues=$FAILED_CHECKS" >> $GITHUB_OUTPUT
           
           # Generate HTML report
-          echo "<html><head><title>Checkov Security Report</title>" > security_reports/checkov_report.html
-          echo "<style>body{font-family:Arial,sans-serif;margin:20px}h1{color:#333}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:8px;border:1px solid #ddd}th{background-color:#f2f2f2}tr:nth-child(even){background-color:#f9f9f9}.failed{background-color:#ffdddd}.passed{background-color:#eaffea}</style>" >> security_reports/checkov_report.html
-          echo "</head><body><h1>Checkov Security Scan Results</h1>" >> security_reports/checkov_report.html
-          
-          echo "<h2>Found $FAILED_CHECKS potential security issues</h2>" >> security_reports/checkov_report.html
-          
-          if [ "$FAILED_CHECKS" -gt 0 ]; then
-            echo "<table><tr><th>Check ID</th><th>Status</th><th>Description</th><th>Resource</th><th>File</th></tr>" >> security_reports/checkov_report.html
-            
-            # Parse JSON and create table rows
-            cat > /tmp/checkov_parse.py << 'EOF_PYTHON'
-import json, sys
-data = json.load(sys.stdin)
-for result in data.get('results', {}).get('failed_checks', []):
-    check_id = result.get('check_id', 'unknown')
-    check_name = result.get('check_name', 'No description')
-    resource = result.get('resource', 'unknown')
-    file_path = result.get('file_path', 'unknown')
-    print(f'<tr class="failed"><td>{check_id}</td><td>FAILED</td><td>{check_name}</td><td>{resource}</td><td>{file_path}</td></tr>')
-EOF_PYTHON
-            
-            cat security_reports/checkov_report.json | python3 /tmp/checkov_parse.py >> security_reports/checkov_report.html || echo "<tr><td colspan='5'>Error parsing JSON results</td></tr>" >> security_reports/checkov_report.html
-            
-            echo "</table>" >> security_reports/checkov_report.html
-          else
-            echo "<p>No security issues found by Checkov! 🎉</p>" >> security_reports/checkov_report.html
-          fi
-          
-          echo "</body></html>" >> security_reports/checkov_report.html
+          python3 ../scripts/checkov_parser.py --json security_reports/checkov_report.json --html security_reports/checkov_report.html
           
           echo "Checkov scan completed. Found $FAILED_CHECKS issues."
 
@@ -185,34 +131,30 @@ EOF_PYTHON
           CHECKOV_ISSUES=$(cat $GITHUB_OUTPUT | grep checkov_issues | cut -d= -f2 || echo "0")
           TOTAL_ISSUES=$((TFSEC_ISSUES + CHECKOV_ISSUES))
           
-          # Create markdown report
-          cat > security_reports/SECURITY_REPORT.md << EOF
-# Security Scan Report
-
-## Summary
-- **Total Issues Found**: ${TOTAL_ISSUES}
-- **TFSec Issues**: ${TFSEC_ISSUES}
-- **Checkov Issues**: ${CHECKOV_ISSUES}
-
-## Detailed Reports
-- [TFSec Report](tfsec_report.md)
-- [Checkov Report](checkov_report.txt)
-
-## Recommendations
-EOF
+          # Create basic report
+          echo "# Security Scan Report" > security_reports/SECURITY_REPORT.md
+          echo "" >> security_reports/SECURITY_REPORT.md
+          echo "## Summary" >> security_reports/SECURITY_REPORT.md
+          echo "- **Total Issues Found**: ${TOTAL_ISSUES}" >> security_reports/SECURITY_REPORT.md
+          echo "- **TFSec Issues**: ${TFSEC_ISSUES}" >> security_reports/SECURITY_REPORT.md
+          echo "- **Checkov Issues**: ${CHECKOV_ISSUES}" >> security_reports/SECURITY_REPORT.md
+          echo "" >> security_reports/SECURITY_REPORT.md
+          echo "## Detailed Reports" >> security_reports/SECURITY_REPORT.md
+          echo "- [TFSec Report](tfsec_report.md)" >> security_reports/SECURITY_REPORT.md
+          echo "- [Checkov Report](checkov_report.txt)" >> security_reports/SECURITY_REPORT.md
+          echo "" >> security_reports/SECURITY_REPORT.md
+          echo "## Recommendations" >> security_reports/SECURITY_REPORT.md
           
           # Add recommendations based on common findings
           if [ $TOTAL_ISSUES -gt 0 ]; then
-            cat >> security_reports/SECURITY_REPORT.md << EOF
-### General Security Recommendations
-- Encrypt sensitive data at rest and in transit
-- Use IAM roles with least privilege access
-- Enable logging and monitoring for all resources
-- Implement network security groups with restrictive rules
-- Use secure defaults for all resources
-
-### Common Issues to Fix
-EOF
+            echo "### General Security Recommendations" >> security_reports/SECURITY_REPORT.md
+            echo "- Encrypt sensitive data at rest and in transit" >> security_reports/SECURITY_REPORT.md
+            echo "- Use IAM roles with least privilege access" >> security_reports/SECURITY_REPORT.md
+            echo "- Enable logging and monitoring for all resources" >> security_reports/SECURITY_REPORT.md
+            echo "- Implement network security groups with restrictive rules" >> security_reports/SECURITY_REPORT.md
+            echo "- Use secure defaults for all resources" >> security_reports/SECURITY_REPORT.md
+            echo "" >> security_reports/SECURITY_REPORT.md
+            echo "### Common Issues to Fix" >> security_reports/SECURITY_REPORT.md
             
             # Extract common issues from TFSec
             if [ $TFSEC_ISSUES -gt 0 ]; then
@@ -226,16 +168,14 @@ EOF
               cat security_reports/checkov_report.txt | grep 'Check:' | sed 's/Check: /- /' | sort | uniq | head -10 >> security_reports/SECURITY_REPORT.md
             fi
           else
-            cat >> security_reports/SECURITY_REPORT.md << EOF
-🎉 No security issues found! Keep up the good work!
-
-### Proactive Security Recommendations
-- Regularly update your providers and modules
-- Implement infrastructure security scanning in your CI/CD pipeline
-- Review IAM permissions regularly and follow least privilege principle
-- Enable encryption and logging across all services
-- Use Terraform modules from trusted sources
-EOF
+            echo "🎉 No security issues found! Keep up the good work!" >> security_reports/SECURITY_REPORT.md
+            echo "" >> security_reports/SECURITY_REPORT.md
+            echo "### Proactive Security Recommendations" >> security_reports/SECURITY_REPORT.md
+            echo "- Regularly update your providers and modules" >> security_reports/SECURITY_REPORT.md
+            echo "- Implement infrastructure security scanning in your CI/CD pipeline" >> security_reports/SECURITY_REPORT.md
+            echo "- Review IAM permissions regularly and follow least privilege principle" >> security_reports/SECURITY_REPORT.md
+            echo "- Enable encryption and logging across all services" >> security_reports/SECURITY_REPORT.md
+            echo "- Use Terraform modules from trusted sources" >> security_reports/SECURITY_REPORT.md
           fi
           
           # Copy report to the main directory if it's not the same as the current directory
@@ -252,118 +192,20 @@ EOF
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          cd inframate
-          
           # Install required packages
           pip install google-generativeai python-dotenv
-          
-          # Create AI analysis script
-          mkdir -p scripts
-          
-          # Create the script content in a separate file
-          cat > scripts/analyze_security.py << 'EOF_PYTHON'
-import os
-import sys
-import json
-import glob
-from dotenv import load_dotenv
-import google.generativeai as genai
-
-# Load environment variables
-load_dotenv()
-
-# Set up Gemini API
-api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-if not api_key:
-    print("Error: GEMINI_API_KEY or GOOGLE_API_KEY environment variable not set")
-    sys.exit(1)
-
-genai.configure(api_key=api_key)
-model = genai.GenerativeModel("gemini-2.0-flash")
-
-def get_report_content(target_repo):
-    """Read the security reports and Terraform files to create context"""
-    content = ""
-    
-    # Read TFSec report
-    tfsec_report_path = os.path.join(target_repo, "security_reports/tfsec_report.md")
-    if os.path.exists(tfsec_report_path):
-        with open(tfsec_report_path, 'r') as f:
-            content += "## TFSec Report\n" + f.read() + "\n\n"
-    
-    # Read Checkov report
-    checkov_report_path = os.path.join(target_repo, "security_reports/checkov_report.txt")
-    if os.path.exists(checkov_report_path):
-        with open(checkov_report_path, 'r') as f:
-            content += "## Checkov Report\n" + f.read() + "\n\n"
-    
-    # Read terraform files for context
-    tf_files = []
-    for root, dirs, files in os.walk(target_repo):
-        for file in files:
-            if file.endswith('.tf'):
-                tf_files.append(os.path.join(root, file))
-    
-    # Get a sample of up to 5 terraform files
-    tf_sample = tf_files[:5]
-    for tf_file in tf_sample:
-        with open(tf_file, 'r') as f:
-            file_content = f.read()
-            content += f"## Terraform File: {os.path.basename(tf_file)}\n```hcl\n{file_content}\n```\n\n"
-    
-    return content
-
-def analyze_security_results(content):
-    """Use Gemini to analyze security scan results and provide recommendations"""
-    prompt = f"""
-You are a highly skilled AWS security expert and Terraform specialist. Analyze the following security scan results and provide detailed, specific recommendations.
-
-SECURITY SCAN RESULTS:
-{content}
-
-Please provide:
-1. A comprehensive security assessment of the Terraform infrastructure based on the scan results
-2. Prioritized list of critical issues to fix immediately (with specific code examples of both problematic and fixed code)
-3. Medium and low priority issues that should be addressed
-4. Best practices recommendations for secure AWS infrastructure
-5. Specific steps to implement a more secure infrastructure as code approach
-
-Format your response in markdown with clear sections and actionable advice.
-"""
-
-    try:
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        print(f"Error generating AI analysis: {e}")
-        return f"Error generating AI analysis: {e}"
-
-if __name__ == "__main__":
-    target_repo = "../target_repo"
-    content = get_report_content(target_repo)
-    
-    if not content:
-        print("No security reports found. Cannot generate AI analysis.")
-        sys.exit(1)
-    
-    analysis = analyze_security_results(content)
-    
-    with open("AI_SECURITY_ANALYSIS.md", "w") as f:
-        f.write("# AI-Powered Security Analysis\n\n")
-        f.write("*Generated by Inframate using Google Gemini AI*\n\n")
-        f.write(analysis)
-    
-    print("AI security analysis complete.")
-EOF_PYTHON
           
           # Run the AI analysis if API key is available
           if [ -n "$GEMINI_API_KEY" ] || [ -n "$GOOGLE_API_KEY" ]; then
             echo "Generating AI-powered security analysis..."
-            python scripts/analyze_security.py
+            python3 scripts/gemini_security_analyzer.py \
+              --tfsec-report="target_repo/security_reports/tfsec_report.md" \
+              --checkov-report="target_repo/security_reports/checkov_report.txt" \
+              --tf-directory="target_repo" \
+              --output="target_repo/security_reports/AI_SECURITY_ANALYSIS.md"
             
-            # Copy result to target repository
-            if [ -f "AI_SECURITY_ANALYSIS.md" ]; then
-              cp AI_SECURITY_ANALYSIS.md "../target_repo/security_reports/"
+            # Check if analysis was generated
+            if [ -f "target_repo/security_reports/AI_SECURITY_ANALYSIS.md" ]; then
               echo "AI security analysis generated successfully"
             else
               echo "Failed to generate AI security analysis"
