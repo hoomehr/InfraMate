@@ -129,54 +129,14 @@ jobs:
           MAIN_TF_DIR=$(cat $GITHUB_OUTPUT | grep main_tf_dir | cut -d= -f2)
           TFSEC_ISSUES=$(cat $GITHUB_OUTPUT | grep tfsec_issues | cut -d= -f2 || echo "0")
           CHECKOV_ISSUES=$(cat $GITHUB_OUTPUT | grep checkov_issues | cut -d= -f2 || echo "0")
-          TOTAL_ISSUES=$((TFSEC_ISSUES + CHECKOV_ISSUES))
           
-          # Create basic report
-          echo "# Security Scan Report" > security_reports/SECURITY_REPORT.md
-          echo "" >> security_reports/SECURITY_REPORT.md
-          echo "## Summary" >> security_reports/SECURITY_REPORT.md
-          echo "- **Total Issues Found**: ${TOTAL_ISSUES}" >> security_reports/SECURITY_REPORT.md
-          echo "- **TFSec Issues**: ${TFSEC_ISSUES}" >> security_reports/SECURITY_REPORT.md
-          echo "- **Checkov Issues**: ${CHECKOV_ISSUES}" >> security_reports/SECURITY_REPORT.md
-          echo "" >> security_reports/SECURITY_REPORT.md
-          echo "## Detailed Reports" >> security_reports/SECURITY_REPORT.md
-          echo "- [TFSec Report](tfsec_report.md)" >> security_reports/SECURITY_REPORT.md
-          echo "- [Checkov Report](checkov_report.txt)" >> security_reports/SECURITY_REPORT.md
-          echo "" >> security_reports/SECURITY_REPORT.md
-          echo "## Recommendations" >> security_reports/SECURITY_REPORT.md
+          cd security_reports
           
-          # Add recommendations based on common findings
-          if [ $TOTAL_ISSUES -gt 0 ]; then
-            echo "### General Security Recommendations" >> security_reports/SECURITY_REPORT.md
-            echo "- Encrypt sensitive data at rest and in transit" >> security_reports/SECURITY_REPORT.md
-            echo "- Use IAM roles with least privilege access" >> security_reports/SECURITY_REPORT.md
-            echo "- Enable logging and monitoring for all resources" >> security_reports/SECURITY_REPORT.md
-            echo "- Implement network security groups with restrictive rules" >> security_reports/SECURITY_REPORT.md
-            echo "- Use secure defaults for all resources" >> security_reports/SECURITY_REPORT.md
-            echo "" >> security_reports/SECURITY_REPORT.md
-            echo "### Common Issues to Fix" >> security_reports/SECURITY_REPORT.md
-            
-            # Extract common issues from TFSec
-            if [ $TFSEC_ISSUES -gt 0 ]; then
-              echo "#### TFSec Findings" >> security_reports/SECURITY_REPORT.md
-              cat security_reports/tfsec_report.md | grep -o '\*\*Description\*\*: .*' | sed 's/\*\*Description\*\*: /- /' | sort | uniq | head -10 >> security_reports/SECURITY_REPORT.md
-            fi
-            
-            # Extract common issues from Checkov
-            if [ $CHECKOV_ISSUES -gt 0 ]; then
-              echo "#### Checkov Findings" >> security_reports/SECURITY_REPORT.md
-              cat security_reports/checkov_report.txt | grep 'Check:' | sed 's/Check: /- /' | sort | uniq | head -10 >> security_reports/SECURITY_REPORT.md
-            fi
-          else
-            echo "🎉 No security issues found! Keep up the good work!" >> security_reports/SECURITY_REPORT.md
-            echo "" >> security_reports/SECURITY_REPORT.md
-            echo "### Proactive Security Recommendations" >> security_reports/SECURITY_REPORT.md
-            echo "- Regularly update your providers and modules" >> security_reports/SECURITY_REPORT.md
-            echo "- Implement infrastructure security scanning in your CI/CD pipeline" >> security_reports/SECURITY_REPORT.md
-            echo "- Review IAM permissions regularly and follow least privilege principle" >> security_reports/SECURITY_REPORT.md
-            echo "- Enable encryption and logging across all services" >> security_reports/SECURITY_REPORT.md
-            echo "- Use Terraform modules from trusted sources" >> security_reports/SECURITY_REPORT.md
-          fi
+          # Generate report using external script
+          chmod +x ../../../inframate/scripts/security/create_summary.sh
+          ../../../inframate/scripts/security/create_summary.sh $TFSEC_ISSUES $CHECKOV_ISSUES SECURITY_REPORT.md
+          
+          cd ..
           
           # Copy report to the main directory if it's not the same as the current directory
           if [ "$MAIN_TF_DIR" != "." ] && [ -d "$MAIN_TF_DIR" ]; then
@@ -201,7 +161,9 @@ jobs:
           if [ ! -f "security_reports/tfsec_report.md" ] || [ ! -f "security_reports/checkov_report.txt" ]; then
             echo "Warning: Security reports not found. Cannot generate AI analysis."
             touch security_reports/AI_SECURITY_ANALYSIS.md
-            echo "# Security Analysis Unavailable\n\nUnable to generate AI security analysis due to missing security reports." > security_reports/AI_SECURITY_ANALYSIS.md
+            echo "# Security Analysis Unavailable" > security_reports/AI_SECURITY_ANALYSIS.md
+            echo "" >> security_reports/AI_SECURITY_ANALYSIS.md
+            echo "Unable to generate AI security analysis due to missing security reports." >> security_reports/AI_SECURITY_ANALYSIS.md
             exit 0
           fi
           
@@ -237,42 +199,12 @@ jobs:
             else
               echo "Failed to generate AI security analysis or file is empty"
               # Create a fallback analysis file with basic recommendations
-              cat > security_reports/AI_SECURITY_ANALYSIS.md << EOF
-# AI Security Analysis
-
-*Note: The automatic AI analysis could not be generated. Here are some general security recommendations:*
-
-## General Security Best Practices
-
-1. **Use IAM roles with least privilege access**
-   - Restrict permissions to only what is necessary
-   - Regularly review and audit permissions
-
-2. **Encrypt sensitive data**
-   - Use AWS KMS for managing encryption keys
-   - Enable encryption at rest for all data stores
-   - Enable encryption in transit
-
-3. **Network Security**
-   - Use security groups with restrictive inbound/outbound rules
-   - Implement network ACLs for additional security
-   - Use private subnets for sensitive resources
-
-4. **Logging and Monitoring**
-   - Enable CloudTrail for API logging
-   - Set up CloudWatch alarms for suspicious activities
-   - Implement centralized logging
-
-5. **Resource Configuration**
-   - Disable public access where not needed
-   - Use secure TLS versions
-   - Keep software and dependencies updated
-EOF
+              cp ../inframate/scripts/security/fallback_recommendations.md security_reports/AI_SECURITY_ANALYSIS.md
             fi
           else
             echo "Skipping AI analysis - No Gemini API key found"
             # Create a notice file
-            echo "# AI Security Analysis Unavailable\n\nAI-powered security analysis was skipped because no Gemini API key was provided." > security_reports/AI_SECURITY_ANALYSIS.md
+            cp ../inframate/scripts/security/missing_api_key.md security_reports/AI_SECURITY_ANALYSIS.md
           fi
 
       - name: Create Pull Request
