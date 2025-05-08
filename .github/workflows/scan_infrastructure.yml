@@ -1,4 +1,4 @@
-# Scan Infrastructure Workflow for Terraform files
+# Scan Infrastructure Workflow - Simple Version
 name: Scan Infrastructure
 
 on:
@@ -15,169 +15,107 @@ on:
 
 jobs:
   scan:
-    name: Scan Infrastructure
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Inframate
         uses: actions/checkout@v4
         with:
           path: inframate
-
+          
       - name: Checkout target repository
         uses: actions/checkout@v4
         with:
           repository: ${{ github.event.inputs.target_repo }}
           ref: ${{ github.event.inputs.target_branch }}
-          token: ${{ secrets.REPO_PAT }}
           path: target_repo
-
+      
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-          cache: 'pip'
-          cache-dependency-path: 'inframate/setup.py'
-
-      - name: Install Minimal Dependencies
+      
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          
-          # Create and activate a clean virtual environment
-          cd inframate
-          
-          # Tell pip to not use a cache
-          pip config set global.cache-dir false
-          
-          # Install core dependencies first
-          pip install requests pathlib boto3 pyyaml python-dotenv google-generativeai gitpython click colorama numpy
-          
-          # For Terraform parsing
-          pip install python-hcl2 tabulate
-          
-          # Install Terraform CLI for resource extraction
-          TF_VERSION="1.5.7"
-          curl -Lo /tmp/terraform.zip "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip"
-          unzip -q /tmp/terraform.zip -d /tmp
-          sudo mv /tmp/terraform /usr/local/bin/
-
-      - name: Find Terraform Files and Resources
-        id: tf_find
+          pip install requests python-dotenv google-generativeai tabulate
+      
+      - name: Find Terraform files
+        id: find_tf
         run: |
           cd target_repo
           echo "Scanning for Terraform files..."
-          
           TF_FILES=$(find . -name "*.tf" | sort)
-          TF_COUNT=$(echo "$TF_FILES" | wc -l)
           
           if [ -z "$TF_FILES" ]; then
             echo "No Terraform files found in the repository."
-            echo "tf_files_found=false" >> $GITHUB_OUTPUT
+            echo "tf_found=false" >> $GITHUB_OUTPUT
             exit 0
           else
-            echo "Found $TF_COUNT Terraform files:"
+            echo "Found Terraform files:"
             echo "$TF_FILES"
-            echo "tf_files_found=true" >> $GITHUB_OUTPUT
+            echo "tf_found=true" >> $GITHUB_OUTPUT
             
-            # Find terraform root directories (containing *.tf files)
-            TF_DIRS=$(dirname $(find . -name "*.tf") | sort | uniq)
+            # Create resource extraction script
+            mkdir -p /tmp/scripts
             
-            # Create a report directory
-            mkdir -p /tmp/tf_report
+            echo '
+            import os
+            import re
+            import sys
             
-            # Create report of resources found
-            RESOURCE_REPORT="/tmp/tf_report/resources.txt"
-            echo "# Terraform Resources" > $RESOURCE_REPORT
-            echo "" >> $RESOURCE_REPORT
+            def extract_resources(terraform_file):
+                resources = []
+                with open(terraform_file, "r") as f:
+                    content = f.read()
+                
+                pattern = r"resource\s+\"([^\"]+)\"\s+\"([^\"]+)\""
+                matches = re.finditer(pattern, content)
+                
+                for match in matches:
+                    resource_type = match.group(1)
+                    resource_name = match.group(2)
+                    resources.append(f"{resource_type}.{resource_name}")
+                
+                return resources
             
-            # Try to run terraform init and terraform state list in each directory
-            for dir in $TF_DIRS; do
-              echo "Processing directory: $dir"
-              echo "## Resources in: $dir" >> $RESOURCE_REPORT
-              echo "" >> $RESOURCE_REPORT
-              
-              # Copy terraform files to a temp directory for analysis
-              ANALYSIS_DIR="/tmp/tf_analysis_$(echo $dir | sed 's/[^a-zA-Z0-9]/_/g')"
-              mkdir -p "$ANALYSIS_DIR"
-              cp "$dir"/*.tf "$ANALYSIS_DIR"/ 2>/dev/null || true
-              
-              # Try to extract resources using Python HCL parser (no terraform init needed)
-              cd $ANALYSIS_DIR
-              
-              cat > extract_resources.py << 'EOFSCRIPT'
-              import sys
-              import glob
-              import re
-              
-              def extract_resources_simple(tf_file):
-                  """Extract resources using regex for simple cases"""
-                  resources = []
-                  with open(tf_file, 'r') as f:
-                      content = f.read()
-                  
-                  # Find resource blocks
-                  resource_pattern = r'resource\s+"([^"]+)"\s+"([^"]+)"\s*\{'
-                  for match in re.finditer(resource_pattern, content):
-                      resource_type = match.group(1)
-                      resource_name = match.group(2)
-                      resources.append(f"{resource_type}.{resource_name}")
-                  
-                  return resources
-              
-              def print_resources():
-                  """Print all resources found in Terraform files"""
-                  all_resources = []
-                  tf_files = glob.glob("*.tf")
-                  
-                  for tf_file in tf_files:
-                      for resource in extract_resources_simple(tf_file):
-                          all_resources.append(resource)
-                  
-                  # Sort and print resources
-                  for resource in sorted(all_resources):
-                      print(f"- {resource}")
-              
-              if __name__ == "__main__":
-                  print_resources()
-EOFSCRIPT
-              
-              echo "Resources detected:" >> $RESOURCE_REPORT
-              python extract_resources.py >> $RESOURCE_REPORT 2>/dev/null || echo "- Failed to extract resources" >> $RESOURCE_REPORT
-              echo "" >> $RESOURCE_REPORT
-              cd ../../target_repo
-            done
+            if __name__ == "__main__":
+                if len(sys.argv) < 2:
+                    print("Usage: python script.py <terraform_file>")
+                    sys.exit(1)
+                
+                terraform_file = sys.argv[1]
+                resources = extract_resources(terraform_file)
+                
+                for resource in resources:
+                    print(f"- {resource}")
+            ' > /tmp/scripts/extract_tf.py
             
-            # Copy all Terraform files for analysis
-            mkdir -p /tmp/tf_files
+            # Create report
+            echo "# Terraform Resources Found" > /tmp/resources.txt
+            echo "" >> /tmp/resources.txt
+            
             for file in $TF_FILES; do
-              DEST_FILE=$(echo "$file" | sed 's|^./||' | sed 's|/|_|g')
-              cp "$file" "/tmp/tf_files/$DEST_FILE"
+              echo "## File: $file" >> /tmp/resources.txt
+              python /tmp/scripts/extract_tf.py "$file" >> /tmp/resources.txt 2>/dev/null || echo "- Failed to extract resources" >> /tmp/resources.txt
+              echo "" >> /tmp/resources.txt
             done
             
-            # Save the resource report for analysis
-            cp $RESOURCE_REPORT /tmp/tf_files/
+            cp /tmp/resources.txt ./resources.txt
           fi
-          
-          # Find the main Terraform directory (if there are multiple, use the first one with the most files)
-          MAIN_TF_DIR=$(dirname $(find . -name "*.tf" | sort) | sort | uniq -c | sort -nr | head -1 | awk '{print $2}')
-          echo "main_tf_dir=$MAIN_TF_DIR" >> $GITHUB_OUTPUT
-
-      - name: Generate Infrastructure Analysis
-        if: steps.tf_find.outputs.tf_files_found == 'true'
-        id: analyze_tf
+      
+      - name: Generate analysis
+        if: steps.find_tf.outputs.tf_found == 'true'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          MAIN_TF_DIR: ${{ steps.tf_find.outputs.main_tf_dir }}
         run: |
           cd inframate
           
-          echo "Analyzing Terraform files with Gemini..."
+          # Create simple analysis script
+          mkdir -p scripts
           
-          # Create the improved analysis script
-          cat > scripts/analyze_terraform.py << 'EOFSCRIPT'
+          echo '
           import os
-          import re
           import sys
-          import glob
           import google.generativeai as genai
           
           # Set up Gemini API
@@ -187,173 +125,97 @@ EOFSCRIPT
               sys.exit(1)
           
           genai.configure(api_key=api_key)
-          model = genai.GenerativeModel('gemini-1.5-pro')
+          model = genai.GenerativeModel("gemini-1.5-pro")
           
-          def get_terraform_content(dir_path):
-              """Read all Terraform files and resource list in the directory and concatenate their content"""
-              content = ""
-              files = glob.glob(f"{dir_path}/*.tf")
+          def analyze_terraform(resources_file):
+              with open(resources_file, "r") as f:
+                  resources = f.read()
               
-              # First, add the resource report if it exists
-              resource_report = f"{dir_path}/resources.txt"
-              if os.path.exists(resource_report):
-                  with open(resource_report, 'r') as f:
-                      content += "# Terraform Resources Found\n\n"
-                      content += f.read()
-                      content += "\n\n"
+              prompt = """
+              Based on the following Terraform resources, provide infrastructure recommendations:
               
-              # Add summary of all filenames
-              content += "# Terraform Files:\n"
-              for file in files:
-                  content += f"- {os.path.basename(file)}\n"
+              {}
               
-              content += "\n# File Contents:\n"
+              Please include:
+              1. Cost optimization suggestions
+              2. Security best practices
+              3. Performance improvements 
+              4. Infrastructure as Code best practices
+              5. Scalability considerations
               
-              # Then add file contents, but limit total size
-              total_size = 0
-              max_size = 100000  # Limit to ~100KB total
-              
-              for file in files:
-                  with open(file, 'r') as f:
-                      file_content = f.read()
-                      file_size = len(file_content)
-                      
-                      if total_size + file_size > max_size:
-                          # If adding this file would exceed the limit, add a truncated version
-                          available_space = max_size - total_size
-                          if available_space > 500:  # Only add if we can include a meaningful portion
-                              file_content = file_content[:available_space] + "\n... (truncated)"
-                              content += f"\n\n## {os.path.basename(file)}\n```terraform\n{file_content}\n```"
-                          content += "\n\n... (some files omitted due to size constraints)"
-                          break
-                      
-                      content += f"\n\n## {os.path.basename(file)}\n```terraform\n{file_content}\n```"
-                      total_size += file_size
-              
-              return content
-          
-          def analyze_terraform(tf_content):
-              """Use Gemini to analyze Terraform files and provide detailed recommendations"""
-              prompt = f"""Analyze the following Terraform configuration files and provide:
-
-          # Infrastructure Analysis
-
-          ## Infrastructure Overview
-          Provide a brief summary of the infrastructure described in the Terraform files. List the main resources and how they're connected.
-
-          ## Resource Inventory
-          Create a complete inventory of AWS resources found in the configuration.
-
-          ## Cost Estimation
-          Provide a detailed, realistic cost estimation table for the infrastructure in this format:
-          | Resource Type | Count | Monthly Cost (USD) | Notes |
-          |--------------|-------|-------------------|-------|
-          | Resource 1   | X     | $XX.XX            | Any special notes |
-          | Resource 2   | X     | $XX.XX            | Any special notes |
-          | **Total**    |       | $XX.XX            | |
-
-          Provide separate pricing for different environments if applicable (dev/prod).
-
-          ## Improvement Recommendations
-          Suggest specific improvements for this infrastructure with code examples.
-
-          ## Security Recommendations
-          Identify potential security issues and how to fix them.
-
-          ## Cost Optimization
-          Suggest specific ways to optimize costs with exact savings amounts.
-
-          ## Scalability Recommendations
-          Suggest how to improve scalability for this infrastructure.
-
-          ## Terraform Best Practices
-          Suggest improvements to follow Terraform best practices.
-
-          Present your analysis in markdown format with clear headings for each section.
-          Be specific and actionable in your recommendations.
-
-          Here is the Terraform configuration:
-
-          {tf_content}"""
+              Format as markdown with clear headings and actionable recommendations.
+              """.format(resources)
               
               try:
                   response = model.generate_content(prompt)
                   return response.text
               except Exception as e:
-                  print(f"Error generating analysis: {str(e)}")
-                  return "Error generating analysis. Please try again later."
+                  return f"Error generating analysis: {e}"
           
           if __name__ == "__main__":
-              # Get the directory path from command-line argument or use default
-              if len(sys.argv) > 1:
-                  tf_dir = sys.argv[1]
-              else:
-                  tf_dir = "/tmp/tf_files"
+              resources_file = "../target_repo/resources.txt"
+              analysis = analyze_terraform(resources_file)
               
-              tf_content = get_terraform_content(tf_dir)
-              
-              if not tf_content:
-                  print("No Terraform files found or files are empty.")
-                  sys.exit(1)
-              
-              analysis = analyze_terraform(tf_content)
-              
-              # Save the analysis to a file
-              output_file = "terraform_improvements.md"
-              with open(output_file, "w") as f:
-                  f.write("# Terraform Infrastructure Analysis\n\n")
-                  f.write("*Generated by Inframate - AI-powered infrastructure assistant*\n\n")
+              with open("IMPROVEMENTS.md", "w") as f:
+                  f.write("# Infrastructure Improvement Recommendations\n\n")
                   f.write(analysis)
               
-              print(f"Analysis complete. Results saved to {output_file}")
-EOFSCRIPT
+              print("Analysis complete.")
+          ' > scripts/analyze.py
           
-          # Run the analysis script
-          python scripts/analyze_terraform.py
-          
-          # Move the analysis to target_repo's terraform directory
-          if [ -f "terraform_improvements.md" ]; then
-            # Place directly in the main terraform directory
-            mkdir -p "../target_repo/${MAIN_TF_DIR}"
-            cp terraform_improvements.md "../target_repo/${MAIN_TF_DIR}/IMPROVEMENTS.md"
-            echo "analysis_generated=true" >> $GITHUB_OUTPUT
+          # Run analysis if API key is available
+          if [ -n "$GEMINI_API_KEY" ]; then
+            python scripts/analyze.py
           else
-            echo "Failed to generate analysis"
-            echo "analysis_generated=false" >> $GITHUB_OUTPUT
+            # Fallback to static analysis if no API key
+            echo "# Infrastructure Improvement Recommendations" > IMPROVEMENTS.md
+            echo "" >> IMPROVEMENTS.md
+            echo "## Cost Optimization" >> IMPROVEMENTS.md
+            echo "- Consider using reserved instances for long-running workloads" >> IMPROVEMENTS.md
+            echo "- Use auto-scaling for variable workloads" >> IMPROVEMENTS.md
+            echo "" >> IMPROVEMENTS.md
+            echo "## Security Best Practices" >> IMPROVEMENTS.md
+            echo "- Enable encryption for all data at rest" >> IMPROVEMENTS.md
+            echo "- Implement least privilege access" >> IMPROVEMENTS.md
+            echo "" >> IMPROVEMENTS.md
+            echo "## Best Practices" >> IMPROVEMENTS.md
+            echo "- Use modules for reusable components" >> IMPROVEMENTS.md
+            echo "- Implement consistent tagging strategy" >> IMPROVEMENTS.md
           fi
-
+          
+          # Copy to target repository
+          mkdir -p ../target_repo/terraform
+          cp IMPROVEMENTS.md ../target_repo/terraform/
+          
+          echo "Analysis created successfully"
+      
       - name: Create Pull Request
-        if: steps.analyze_tf.outputs.analysis_generated == 'true'
+        if: steps.find_tf.outputs.tf_found == 'true'
         uses: peter-evans/create-pull-request@v5
         with:
-          token: ${{ secrets.REPO_PAT }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           path: target_repo
-          commit-message: "Inframate: Terraform Infrastructure Analysis and Improvements"
-          title: "💡 Inframate: Terraform Infrastructure Analysis and Improvements"
+          commit-message: "Add infrastructure improvement recommendations"
+          title: "Infrastructure Optimization Recommendations"
           body: |
-            ## Terraform Infrastructure Analysis
+            # Infrastructure Analysis
             
-            This PR adds an analysis of your existing Terraform infrastructure by Inframate, an AI-powered infrastructure assistant.
+            This PR contains recommendations for improving your infrastructure based on Terraform analysis.
             
             The analysis includes:
-            - Complete infrastructure overview
-            - Detailed resource inventory
-            - Monthly cost estimation
-            - Security recommendations
-            - Cost optimization suggestions
-            - Scalability recommendations
-            - Terraform best practices
+            - Cost optimization opportunities
+            - Security best practices
+            - Performance improvements
+            - Infrastructure as Code best practices
+            - Scalability considerations
             
-            Please review the `IMPROVEMENTS.md` file in your Terraform directory for the detailed analysis.
-          branch: "inframate/terraform-improvements"
+            Review the terraform/IMPROVEMENTS.md file for detailed recommendations.
+          branch: inframate-improvements
           base: ${{ github.event.inputs.target_branch }}
-          delete-branch: true
-
-      - name: Upload Analysis as Artifact
-        if: steps.analyze_tf.outputs.analysis_generated == 'true'
+      
+      - name: Upload results
+        if: steps.find_tf.outputs.tf_found == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-improvements
-          path: target_repo/${{ steps.tf_find.outputs.main_tf_dir }}/IMPROVEMENTS.md
-          retention-days: 7
-          if-no-files-found: warn 
+          name: infrastructure-recommendations
+          path: inframate/IMPROVEMENTS.md 
