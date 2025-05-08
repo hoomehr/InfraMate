@@ -277,12 +277,26 @@ jobs:
           base: ${{ github.event.inputs.target_branch }}
           delete-branch: true
 
+      - name: Debug Generated Files
+        run: |
+          cd target_repo
+          echo "Current directory structure:"
+          ls -la
+          
+          echo "Terraform directory contents (if exists):"
+          if [ -d "terraform" ]; then
+            ls -la terraform/
+          else
+            echo "terraform directory does not exist"
+          fi
+
       - name: Upload Terraform as Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-files
+          name: inframate-terraform-files
           path: target_repo/terraform/
           retention-days: 7
+          if-no-files-found: warn
 
   terraform-plan:
     name: Terraform Plan
@@ -297,11 +311,47 @@ jobs:
           repository: ${{ github.event.inputs.target_repo }}
           token: ${{ secrets.REPO_PAT }}
           
+      - name: Check for Terraform Files
+        id: check_files
+        run: |
+          # First try to find terraform files in the checkout
+          if [ -d "terraform" ]; then
+            echo "Using terraform directory from checkout"
+            echo "terraform_dir_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "terraform directory not found in checkout"
+            echo "terraform_dir_exists=false" >> $GITHUB_OUTPUT
+            mkdir -p terraform
+          fi
+          
       - name: Download Terraform Files
         uses: actions/download-artifact@v4
         with:
-          name: terraform-files
-          path: terraform
+          name: inframate-terraform-files
+          path: terraform_artifact
+        continue-on-error: true
+        
+      - name: Copy Artifact Files if Available
+        run: |
+          if [ -d "terraform_artifact" ] && [ "$(ls -A terraform_artifact)" ]; then
+            echo "Copying files from artifact to terraform directory"
+            mkdir -p terraform
+            cp -r terraform_artifact/* terraform/
+          else
+            echo "No files in artifact directory or download failed"
+          fi
+          
+      - name: Check Terraform Directory
+        run: |
+          echo "Contents of current directory:"
+          ls -la
+          
+          echo "Contents of terraform directory (if exists):"
+          if [ -d "terraform" ]; then
+            ls -la terraform/
+          else
+            echo "terraform directory does not exist"
+          fi
           
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
@@ -344,8 +394,9 @@ jobs:
       - name: Upload Plan Result
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-plan
+          name: inframate-terraform-plan
           path: terraform/terraform_plan.txt
+          if-no-files-found: warn
           
       - name: Add Plan Output to PR
         uses: actions/github-script@v6
@@ -378,11 +429,47 @@ jobs:
           repository: ${{ github.event.inputs.target_repo }}
           token: ${{ secrets.REPO_PAT }}
           
+      - name: Check for Terraform Files
+        id: check_files
+        run: |
+          # First try to find terraform files in the checkout
+          if [ -d "terraform" ]; then
+            echo "Using terraform directory from checkout"
+            echo "terraform_dir_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "terraform directory not found in checkout"
+            echo "terraform_dir_exists=false" >> $GITHUB_OUTPUT
+            mkdir -p terraform
+          fi
+          
       - name: Download Terraform Files
         uses: actions/download-artifact@v4
         with:
-          name: terraform-files
-          path: terraform
+          name: inframate-terraform-files
+          path: terraform_artifact
+        continue-on-error: true
+        
+      - name: Copy Artifact Files if Available
+        run: |
+          if [ -d "terraform_artifact" ] && [ "$(ls -A terraform_artifact)" ]; then
+            echo "Copying files from artifact to terraform directory"
+            mkdir -p terraform
+            cp -r terraform_artifact/* terraform/
+          else
+            echo "No files in artifact directory or download failed"
+          fi
+          
+      - name: Check Terraform Directory
+        run: |
+          echo "Contents of current directory:"
+          ls -la
+          
+          echo "Contents of terraform directory (if exists):"
+          if [ -d "terraform" ]; then
+            ls -la terraform/
+          else
+            echo "terraform directory does not exist"
+          fi
           
       - name: Run tfsec
         id: tfsec
@@ -455,11 +542,47 @@ jobs:
           repository: ${{ github.event.inputs.target_repo }}
           token: ${{ secrets.REPO_PAT }}
           
+      - name: Check for Terraform Files
+        id: check_files
+        run: |
+          # First try to find terraform files in the checkout
+          if [ -d "terraform" ]; then
+            echo "Using terraform directory from checkout"
+            echo "terraform_dir_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "terraform directory not found in checkout"
+            echo "terraform_dir_exists=false" >> $GITHUB_OUTPUT
+            mkdir -p terraform
+          fi
+          
       - name: Download Terraform Files
         uses: actions/download-artifact@v4
         with:
-          name: terraform-files
-          path: terraform
+          name: inframate-terraform-files
+          path: terraform_artifact
+        continue-on-error: true
+        
+      - name: Copy Artifact Files if Available
+        run: |
+          if [ -d "terraform_artifact" ] && [ "$(ls -A terraform_artifact)" ]; then
+            echo "Copying files from artifact to terraform directory"
+            mkdir -p terraform
+            cp -r terraform_artifact/* terraform/
+          else
+            echo "No files in artifact directory or download failed"
+          fi
+          
+      - name: Check Terraform Directory
+        run: |
+          echo "Contents of current directory:"
+          ls -la
+          
+          echo "Contents of terraform directory (if exists):"
+          if [ -d "terraform" ]; then
+            ls -la terraform/
+          else
+            echo "terraform directory does not exist"
+          fi
           
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
@@ -488,8 +611,9 @@ jobs:
       - name: Upload Apply Result
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-apply
+          name: inframate-terraform-apply
           path: terraform/terraform_apply.txt
+          if-no-files-found: warn
           
       - name: Add Deployment Results to PR
         uses: actions/github-script@v6
