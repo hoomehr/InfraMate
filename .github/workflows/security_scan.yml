@@ -98,16 +98,18 @@ jobs:
             echo "<table><tr><th>Rule ID</th><th>Severity</th><th>Description</th><th>Location</th></tr>" >> security_reports/tfsec_report.html
             
             # Parse JSON and create table rows
-            cat security_reports/tfsec_report.json | python3 -c "
+            cat > /tmp/tfsec_parse.py << 'EOF_PYTHON'
 import json, sys
 data = json.load(sys.stdin)
 for result in data.get('results', []):
     severity = result.get('severity', 'unknown').lower()
     rule_id = result.get('rule_id', 'unknown')
     description = result.get('description', 'No description')
-    location = f\"{result.get('location', {}).get('filename', 'unknown')}:{result.get('location', {}).get('start_line', 0)}\"
-    print(f'<tr class=\"{severity}\"><td>{rule_id}</td><td>{severity.upper()}</td><td>{description}</td><td>{location}</td></tr>')
-            " >> security_reports/tfsec_report.html || echo "<tr><td colspan='4'>Error parsing JSON results</td></tr>" >> security_reports/tfsec_report.html
+    location = f"{result.get('location', {}).get('filename', 'unknown')}:{result.get('location', {}).get('start_line', 0)}"
+    print(f'<tr class="{severity}"><td>{rule_id}</td><td>{severity.upper()}</td><td>{description}</td><td>{location}</td></tr>')
+EOF_PYTHON
+            
+            cat security_reports/tfsec_report.json | python3 /tmp/tfsec_parse.py >> security_reports/tfsec_report.html || echo "<tr><td colspan='4'>Error parsing JSON results</td></tr>" >> security_reports/tfsec_report.html
             
             echo "</table>" >> security_reports/tfsec_report.html
           else
@@ -152,7 +154,7 @@ for result in data.get('results', []):
             echo "<table><tr><th>Check ID</th><th>Status</th><th>Description</th><th>Resource</th><th>File</th></tr>" >> security_reports/checkov_report.html
             
             # Parse JSON and create table rows
-            cat security_reports/checkov_report.json | python3 -c "
+            cat > /tmp/checkov_parse.py << 'EOF_PYTHON'
 import json, sys
 data = json.load(sys.stdin)
 for result in data.get('results', {}).get('failed_checks', []):
@@ -160,8 +162,10 @@ for result in data.get('results', {}).get('failed_checks', []):
     check_name = result.get('check_name', 'No description')
     resource = result.get('resource', 'unknown')
     file_path = result.get('file_path', 'unknown')
-    print(f'<tr class=\"failed\"><td>{check_id}</td><td>FAILED</td><td>{check_name}</td><td>{resource}</td><td>{file_path}</td></tr>')
-            " >> security_reports/checkov_report.html || echo "<tr><td colspan='5'>Error parsing JSON results</td></tr>" >> security_reports/checkov_report.html
+    print(f'<tr class="failed"><td>{check_id}</td><td>FAILED</td><td>{check_name}</td><td>{resource}</td><td>{file_path}</td></tr>')
+EOF_PYTHON
+            
+            cat security_reports/checkov_report.json | python3 /tmp/checkov_parse.py >> security_reports/checkov_report.html || echo "<tr><td colspan='5'>Error parsing JSON results</td></tr>" >> security_reports/checkov_report.html
             
             echo "</table>" >> security_reports/checkov_report.html
           else
@@ -255,7 +259,9 @@ EOF
           
           # Create AI analysis script
           mkdir -p scripts
-          cat > scripts/analyze_security.py << 'EOT'
+          
+          # Create the script content in a separate file
+          cat > scripts/analyze_security.py << 'EOF_PYTHON'
 import os
 import sys
 import json
@@ -348,7 +354,7 @@ if __name__ == "__main__":
         f.write(analysis)
     
     print("AI security analysis complete.")
-EOT
+EOF_PYTHON
           
           # Run the AI analysis if API key is available
           if [ -n "$GEMINI_API_KEY" ] || [ -n "$GOOGLE_API_KEY" ]; then
