@@ -102,7 +102,7 @@ jobs:
               # Try to extract resources using Python HCL parser (no terraform init needed)
               cd $ANALYSIS_DIR
               
-              cat > extract_resources.py << 'EOF'
+              cat > extract_resources.py << 'EOFSCRIPT'
               import sys
               import glob
               import re
@@ -137,7 +137,7 @@ jobs:
               
               if __name__ == "__main__":
                   print_resources()
-              EOF
+EOFSCRIPT
               
               echo "Resources detected:" >> $RESOURCE_REPORT
               python extract_resources.py >> $RESOURCE_REPORT 2>/dev/null || echo "- Failed to extract resources" >> $RESOURCE_REPORT
@@ -172,7 +172,7 @@ jobs:
           echo "Analyzing Terraform files with Gemini..."
           
           # Create the improved analysis script
-          cat > scripts/analyze_terraform.py << 'EOF'
+          cat > scripts/analyze_terraform.py << 'EOFSCRIPT'
           import os
           import re
           import sys
@@ -305,7 +305,7 @@ jobs:
                   f.write(analysis)
               
               print(f"Analysis complete. Results saved to {output_file}")
-          EOF
+EOFSCRIPT
           
           # Run the analysis script
           python scripts/analyze_terraform.py
