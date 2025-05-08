@@ -1,5 +1,5 @@
 # Scan Infrastructure Workflow - Simple Version
-name: Scan Infrastructure
+name: Infra Cost Optimization 
 
 on:
   workflow_dispatch:
