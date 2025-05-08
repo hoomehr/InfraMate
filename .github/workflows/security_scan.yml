@@ -53,7 +53,7 @@ jobs:
         if: steps.find_tf.outputs.tf_found == 'true'
         run: |
           # Install TFSec
-          curl -L "$(curl -s https://api.github.com/repos/aquasecurity/tfsec/releases/latest | grep -o -E "https://.+?tfsec-linux-amd64")" > tfsec
+          wget -q -O tfsec https://github.com/aquasecurity/tfsec/releases/download/v1.28.1/tfsec-linux-amd64
           chmod +x tfsec
           sudo mv tfsec /usr/local/bin/
           tfsec --version
