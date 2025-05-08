@@ -187,13 +187,13 @@ jobs:
           mkdir -p ../target_repo/terraform
           cp IMPROVEMENTS.md ../target_repo/terraform/
           
-          echo "Analysis created successfully"
+          echo "analysis_complete=true" >> $GITHUB_OUTPUT
       
       - name: Create Pull Request
         if: steps.find_tf.outputs.tf_found == 'true'
         uses: peter-evans/create-pull-request@v5
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.REPO_PAT }}
           path: target_repo
           commit-message: "Add infrastructure improvement recommendations"
           title: "Infrastructure Optimization Recommendations"
