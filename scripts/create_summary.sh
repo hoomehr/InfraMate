@@ -1,14 +1,35 @@
 #!/bin/bash
 # Script to create a security summary report
 
+# Print input arguments for debugging
+echo "Script received arguments: $1 $2 $3"
+
+# Validate input arguments
 if [ $# -ne 3 ]; then
+  echo "Error: Not enough arguments"
   echo "Usage: $0 <tfsec_issues> <checkov_issues> <output_file>"
-  exit 1
+  echo "Creating default report anyway..."
+  # Set default values
+  TFSEC_ISSUES=0
+  CHECKOV_ISSUES=0
+  OUTPUT_FILE=${3:-"SECURITY_REPORT.md"}
+else
+  TFSEC_ISSUES=$1
+  CHECKOV_ISSUES=$2
+  OUTPUT_FILE=$3
 fi
 
-TFSEC_ISSUES=$1
-CHECKOV_ISSUES=$2
-OUTPUT_FILE=$3
+# Make sure issues are numeric
+if ! [[ "$TFSEC_ISSUES" =~ ^[0-9]+$ ]]; then
+  echo "Warning: TFSec issues count is not a number, defaulting to 0"
+  TFSEC_ISSUES=0
+fi
+
+if ! [[ "$CHECKOV_ISSUES" =~ ^[0-9]+$ ]]; then
+  echo "Warning: Checkov issues count is not a number, defaulting to 0"
+  CHECKOV_ISSUES=0
+fi
+
 TOTAL_ISSUES=$((TFSEC_ISSUES + CHECKOV_ISSUES))
 
 # Create basic report
@@ -39,13 +60,13 @@ if [ $TOTAL_ISSUES -gt 0 ]; then
   # Extract common issues from TFSec
   if [ $TFSEC_ISSUES -gt 0 ] && [ -f "tfsec_report.md" ]; then
     echo "#### TFSec Findings" >> $OUTPUT_FILE
-    grep -o '\*\*Description\*\*: .*' tfsec_report.md | sed 's/\*\*Description\*\*: /- /' | sort | uniq | head -10 >> $OUTPUT_FILE
+    grep -o '\*\*Description\*\*: .*' tfsec_report.md | sed 's/\*\*Description\*\*: /- /' | sort | uniq | head -10 >> $OUTPUT_FILE 2>/dev/null || echo "- Unable to extract TFSec findings" >> $OUTPUT_FILE
   fi
   
   # Extract common issues from Checkov
   if [ $CHECKOV_ISSUES -gt 0 ] && [ -f "checkov_report.txt" ]; then
     echo "#### Checkov Findings" >> $OUTPUT_FILE
-    grep 'Check:' checkov_report.txt | sed 's/Check: /- /' | sort | uniq | head -10 >> $OUTPUT_FILE
+    grep 'Check:' checkov_report.txt | sed 's/Check: /- /' | sort | uniq | head -10 >> $OUTPUT_FILE 2>/dev/null || echo "- Unable to extract Checkov findings" >> $OUTPUT_FILE
   fi
 else
   echo "🎉 No security issues found! Keep up the good work!" >> $OUTPUT_FILE

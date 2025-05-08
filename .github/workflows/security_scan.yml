@@ -90,6 +90,7 @@ jobs:
           # Create summary
           ISSUE_COUNT=$(cat security_reports/tfsec_report.json | grep -o '"results":\[[^]]*\]' | grep -o 'severity' | wc -l)
           echo "tfsec_issues=$ISSUE_COUNT" >> $GITHUB_OUTPUT
+          echo "tfsec_issues=$ISSUE_COUNT" > security_reports/tfsec_issues.txt
           
           # Generate HTML report
           python3 ../scripts/tfsec_parser.py --json security_reports/tfsec_report.json --html security_reports/tfsec_report.html
@@ -118,6 +119,7 @@ jobs:
           # Create summary
           FAILED_CHECKS=$(cat security_reports/checkov_report.json | grep -o '"check_id"' | wc -l)
           echo "checkov_issues=$FAILED_CHECKS" >> $GITHUB_OUTPUT
+          echo "checkov_issues=$FAILED_CHECKS" > security_reports/checkov_issues.txt
           
           # Generate HTML report
           python3 ../scripts/checkov_parser.py --json security_reports/checkov_report.json --html security_reports/checkov_report.html
@@ -129,14 +131,35 @@ jobs:
         run: |
           cd target_repo
           MAIN_TF_DIR=$(cat $GITHUB_OUTPUT | grep main_tf_dir | cut -d= -f2)
-          TFSEC_ISSUES=$(cat $GITHUB_OUTPUT | grep tfsec_issues | cut -d= -f2 || echo "0")
-          CHECKOV_ISSUES=$(cat $GITHUB_OUTPUT | grep checkov_issues | cut -d= -f2 || echo "0")
+          
+          # Get issue counts from files (more reliable) or GitHub outputs
+          if [ -f "security_reports/tfsec_issues.txt" ]; then
+            TFSEC_ISSUES=$(cat security_reports/tfsec_issues.txt | cut -d= -f2)
+          else
+            TFSEC_ISSUES=$(cat $GITHUB_OUTPUT | grep tfsec_issues | cut -d= -f2 || echo "0")
+          fi
+          
+          if [ -f "security_reports/checkov_issues.txt" ]; then
+            CHECKOV_ISSUES=$(cat security_reports/checkov_issues.txt | cut -d= -f2)
+          else
+            CHECKOV_ISSUES=$(cat $GITHUB_OUTPUT | grep checkov_issues | cut -d= -f2 || echo "0")
+          fi
+          
+          # Debug output
+          echo "Debug: MAIN_TF_DIR = $MAIN_TF_DIR"
+          echo "Debug: TFSEC_ISSUES = $TFSEC_ISSUES"
+          echo "Debug: CHECKOV_ISSUES = $CHECKOV_ISSUES"
+          
+          # Ensure variables have values
+          TFSEC_ISSUES=${TFSEC_ISSUES:-0}
+          CHECKOV_ISSUES=${CHECKOV_ISSUES:-0}
           
           cd security_reports
           
           # Generate report using external script
           chmod +x ../../scripts/create_summary.sh
-          ../../scripts/create_summary.sh $TFSEC_ISSUES $CHECKOV_ISSUES SECURITY_REPORT.md
+          echo "Debug: Running script with: $TFSEC_ISSUES $CHECKOV_ISSUES SECURITY_REPORT.md"
+          ../../scripts/create_summary.sh "$TFSEC_ISSUES" "$CHECKOV_ISSUES" "SECURITY_REPORT.md"
           
           cd ..
           
