@@ -62,9 +62,11 @@ jobs:
           pip install checkov
           checkov --version
           
-          # Copy security scripts
+          # Copy security scripts and make them executable
           mkdir -p scripts
-          cp inframate/scripts/security/*.py scripts/
+          cp -r inframate/scripts/security/* scripts/
+          chmod +x scripts/*.sh
+          ls -la scripts/
       
       - name: Run TFSec Security Scan
         if: steps.find_tf.outputs.tf_found == 'true'
@@ -133,8 +135,8 @@ jobs:
           cd security_reports
           
           # Generate report using external script
-          chmod +x ../../../inframate/scripts/security/create_summary.sh
-          ../../../inframate/scripts/security/create_summary.sh $TFSEC_ISSUES $CHECKOV_ISSUES SECURITY_REPORT.md
+          chmod +x ../../scripts/create_summary.sh
+          ../../scripts/create_summary.sh $TFSEC_ISSUES $CHECKOV_ISSUES SECURITY_REPORT.md
           
           cd ..
           
@@ -199,12 +201,12 @@ jobs:
             else
               echo "Failed to generate AI security analysis or file is empty"
               # Create a fallback analysis file with basic recommendations
-              cp ../inframate/scripts/security/fallback_recommendations.md security_reports/AI_SECURITY_ANALYSIS.md
+              cp ../../scripts/fallback_recommendations.md security_reports/AI_SECURITY_ANALYSIS.md
             fi
           else
             echo "Skipping AI analysis - No Gemini API key found"
             # Create a notice file
-            cp ../inframate/scripts/security/missing_api_key.md security_reports/AI_SECURITY_ANALYSIS.md
+            cp ../../scripts/missing_api_key.md security_reports/AI_SECURITY_ANALYSIS.md
           fi
 
       - name: Create Pull Request
