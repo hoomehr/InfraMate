@@ -107,6 +107,7 @@ jobs:
         if: steps.find_tf.outputs.tf_found == 'true'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           cd inframate
           
@@ -119,13 +120,13 @@ jobs:
           import google.generativeai as genai
           
           # Set up Gemini API
-          api_key = os.environ.get("GEMINI_API_KEY")
+          api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
           if not api_key:
               print("Error: GEMINI_API_KEY environment variable not set")
               sys.exit(1)
           
           genai.configure(api_key=api_key)
-          model = genai.GenerativeModel("gemini-1.5-pro")
+          model = genai.GenerativeModel("gemini-2.0-flash")
           
           def analyze_terraform(resources_file):
               with open(resources_file, "r") as f:
