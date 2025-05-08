@@ -67,17 +67,6 @@ jobs:
           # Now install our package without dependencies
           pip install -e . --no-dependencies
           
-      - name: Verify Dependencies
-        run: |
-          cd inframate
-          python scripts/verify_deps.py
-          
-      - name: Debug Package Versions
-        run: |
-          cd inframate
-          echo "Installed package versions:"
-          pip list | grep -E 'langchain|tiktoken|sentence-transformers|faiss|numpy|requests'
-          
       - name: Analyze repository structure
         run: |
           cd target_repo

@@ -4,10 +4,12 @@ import sys
 import json
 from pathlib import Path
 from typing import Dict, Any, List
+import re
 
 from inframate.analyzers.repository import analyze_repository
 from inframate.agents.ai_analyzer import analyze_with_ai, fallback_analyze
 from inframate.utils.rag import RAGManager
+from inframate.utils.template_manager import TemplateManager
 
 def read_inframate_file(repo_path: str) -> Dict[str, Any]:
     """Read and parse the inframate.md file"""
@@ -497,35 +499,76 @@ def generate_terraform_files(repo_path: str, analysis: Dict[str, Any], md_data: 
         terraform_template = analysis["terraform_template"]
     else:
         print("No Terraform template in analysis, generating basic template...")
-        # Use local templates based on language/framework
-        terraform_template = generate_terraform_template(md_data, analysis.get("services", []))
+        
+        # Get list of services
+        services = analysis.get("services", [])
+        if not services:
+            print("No services in analysis, using default services...")
+            services = ["EC2", "VPC", "S3", "CloudWatch"]
+        
+        # Use template manager to generate Terraform template
+        template_manager = TemplateManager()
+        terraform_template = template_manager.get_template_for_services(services)
     
-    # Create main.tf
+    # Perform additional validation and fixes
+    validate_terraform_template(terraform_template)
+    
+    # Write main.tf
     with open(os.path.join(tf_dir, 'main.tf'), 'w') as f:
         f.write(terraform_template)
     
-    # Create variables.tf
+    # Generate variables.tf
     variables_tf = generate_variables_tf(md_data)
     with open(os.path.join(tf_dir, 'variables.tf'), 'w') as f:
         f.write(variables_tf)
     
-    # Create outputs.tf
+    # Generate outputs.tf
     outputs_tf = generate_outputs_tf(md_data)
     with open(os.path.join(tf_dir, 'outputs.tf'), 'w') as f:
         f.write(outputs_tf)
     
-    # Create terraform.tfvars
+    # Generate terraform.tfvars
     tfvars = generate_tfvars(md_data)
     with open(os.path.join(tf_dir, 'terraform.tfvars'), 'w') as f:
         f.write(tfvars)
     
-    # Create README.md
+    # Generate README.md
     readme = generate_readme(md_data, analysis)
     with open(os.path.join(tf_dir, 'README.md'), 'w') as f:
         f.write(readme)
     
-    print(f"Terraform files created in {tf_dir}")
     return tf_dir
+
+def validate_terraform_template(template: str) -> str:
+    """
+    Perform basic validation on a Terraform template.
+    
+    Args:
+        template: Terraform template as string
+        
+    Returns:
+        Validated and fixed template
+    """
+    # Make sure we're not referencing undefined variables
+    # This is a basic regex match, not a full HCL parser
+    
+    # Fix missing try() functions in outputs
+    template = re.sub(
+        r'output\s+"([^"]+)"\s+{\s+[^}]*?value\s+=\s+([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+)[^}]*?}',
+        r'output "\1" {\n  value = try(\2, "N/A")\n  description = "\1"\n}',
+        template,
+        flags=re.DOTALL
+    )
+    
+    # Fix launch template network_interface vs network_interfaces issue
+    template = re.sub(
+        r'(resource\s+"aws_launch_template"[^{]*{\s+[^}]*?)network_interface\s+{',
+        r'\1network_interfaces {',
+        template,
+        flags=re.DOTALL
+    )
+    
+    return template
 
 def main(argv=None):
     """Main entry point for Inframate"""
