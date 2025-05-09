@@ -1,0 +1,96 @@
+name: Agentic Infrastructure Management
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_repo:
+        description: 'Target repository to analyze'
+        required: true
+        default: '.'
+      action:
+        description: 'Action to perform (analyze, optimize, secure, visualize, auto)'
+        required: true
+        default: 'analyze'
+      autonomous_mode:
+        description: 'Run in fully autonomous mode'
+        required: true
+        default: 'false'
+        type: boolean
+
+jobs:
+  agentic-infra-management:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Inframate
+        uses: actions/checkout@v4
+        with:
+          path: inframate
+          
+      - name: Checkout target repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.inputs.target_repo }}
+          ref: 'main'
+          path: target_repo
+          
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.5.0'
+          
+      - name: Install dependencies
+        run: |
+          # Install system dependencies
+          sudo apt-get update
+          sudo apt-get install -y graphviz
+          
+          # Install Python dependencies
+          python -m pip install --upgrade pip
+          pip install -r inframate/scripts/visualization/requirements.txt
+          pip install google-generativeai langchain requests
+          
+      - name: Copy visualization scripts
+        run: |
+          mkdir -p scripts
+          cp -r inframate/scripts/visualization scripts/
+      
+      - name: Run agentic workflow
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ACTION: ${{ github.event.inputs.action }}
+          AUTONOMOUS_MODE: ${{ github.event.inputs.autonomous_mode }}
+        run: |
+          python inframate/scripts/agentic_workflow.py \
+            --repo-path target_repo \
+            --action $ACTION \
+            --autonomous $AUTONOMOUS_MODE > analysis_results.json
+          
+          # Display summary of results
+          echo "✅ Analysis completed! Summary of findings:"
+          jq -r '.analysis.resource_counts | length | "Found \(.) unique AWS resource types"' analysis_results.json 2>/dev/null || echo "No resource count available"
+          jq -r '.optimization.recommendations | length | "\(.) optimization recommendations found"' analysis_results.json 2>/dev/null || echo "No optimization recommendations available"
+          
+      - name: Create Pull Request with findings
+        if: github.event.inputs.action != 'analyze'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: target_repo
+          commit-message: "🤖 Inframate Agent: Infrastructure improvements"
+          title: "🤖 Inframate Agent: ${{ github.event.inputs.action }} recommendations"
+          body-path: analysis_results.json
+          branch: "inframate/agent-recommendations"
+          
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: inframate-analysis
+          path: |
+            analysis_results.json
+            target_repo/visualizations/
+          retention-days: 7 
