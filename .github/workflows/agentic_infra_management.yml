@@ -7,6 +7,10 @@ on:
         description: 'Target repository to analyze'
         required: true
         default: '.'
+      target_branch:
+        description: 'Branch to analyze'
+        required: true
+        default: 'main'
       action:
         description: 'Action to perform (analyze, optimize, secure, visualize, auto)'
         required: true
@@ -30,7 +34,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ github.event.inputs.target_repo }}
-          ref: 'main'
+          ref: ${{ github.event.inputs.target_branch }}
           path: target_repo
           
       - name: Set up Python
@@ -85,6 +89,7 @@ jobs:
           title: "🤖 Inframate Agent: ${{ github.event.inputs.action }} recommendations"
           body-path: analysis_results.json
           branch: "inframate/agent-recommendations"
+          base: ${{ github.event.inputs.target_branch }}
           
       - name: Upload results
         uses: actions/upload-artifact@v4
