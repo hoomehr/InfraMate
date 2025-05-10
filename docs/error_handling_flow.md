@@ -301,6 +301,80 @@ python examples/error_flow_demo.py --error-type multi
    - Add custom error types and recovery strategies
    - Integrate with your monitoring systems
 
+## Troubleshooting and Debugging
+
+If you encounter issues with the error handling system, particularly if errors aren't triggering the recovery flow, you can use the following troubleshooting tools and techniques:
+
+### 1. Using the Debugging Utility
+
+The system includes a debugging utility to help diagnose error handling issues:
+
+```bash
+# Test the error handling integration
+./scripts/debug_error_flow.py --action test
+
+# Inject a specific error type to test recovery
+./scripts/debug_error_flow.py --action inject --error-type terraform_error
+
+# Trace the complete error flow for a specific error type
+./scripts/debug_error_flow.py --action trace --error-type api_error
+```
+
+### 2. Common Integration Points to Check
+
+If errors aren't triggering the recovery flow, check these integration points:
+
+1. **Error Handler Initialization**
+   - Ensure `self.error_handler = ErrorLoopHandler()` is properly initialized in both `InfraAgent` and `AgenticWorkflow` classes
+   - Check that the Gemini API key is properly set if you need AI-powered analysis
+
+2. **Error Flow Connection**
+   - Verify that `execute_with_error_handling` properly captures errors and passes them to `handle_error_flow`
+   - Ensure `handle_error_flow` correctly calls `error_handler.handle_error` with the right parameters
+
+3. **Error Reporting**
+   - Make sure error reports are being generated and added to the results
+   - Check that recovery attempts are being recorded in the history
+
+### 3. Debugging with Verbose Logging
+
+You can enable verbose logging to trace the error handling flow:
+
+```bash
+# Run with verbose error reporting
+./scripts/run_agentic_workflow.sh --repo-path ./my-app --action analyze --error-mode verbose
+
+# Set DEBUG logging level
+export LOG_LEVEL=DEBUG
+```
+
+In the logs, look for:
+- "Starting error handling flow" messages
+- "Calling error_handler.handle_error" messages
+- "Recovery success" or "Recovery failed" messages
+
+### 4. Troubleshooting Recovery Strategies
+
+If a specific error type isn't being recovered properly:
+
+1. Check if a recovery strategy is registered for that error type in `_register_default_strategies`
+2. Verify the error classification in `_classify_error` is correctly identifying the error type
+3. Ensure the recovery strategy implementation in `_handle_X_error` methods is working correctly
+
+### 5. Using the Test Scripts
+
+The project includes test scripts to validate error handling:
+
+```bash
+# Test error flow demo with various error types
+python examples/error_flow_demo.py --error-type terraform
+
+# Test error recovery integration
+python examples/test_error_recovery.py
+```
+
+These tests can help identify if there are disconnections between the error detection and recovery mechanisms.
+
 ## Conclusion
 
 Inframate's error handling system with its secondary flow provides robust recovery from common errors, making the infrastructure management process more reliable and resilient. The AI-powered analysis helps identify and fix complex issues that might otherwise require manual intervention.

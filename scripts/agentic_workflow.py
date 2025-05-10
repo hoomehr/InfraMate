@@ -122,11 +122,14 @@ class InfraAgent:
                 "error_type": error_type,
                 "error_message": error_message,
                 "stack_trace": stack_trace,
-                "args": args,
-                "kwargs": kwargs,
+                "args": str(args),  # Convert to string to ensure serializable
+                "kwargs": str(kwargs),  # Convert to string to ensure serializable
                 "recovery_attempt": self.recovery_attempts[func_name],
                 "timestamp": time.time()
             }
+            
+            # Log that we're capturing the error
+            logger.info(f"Captured error in {func_name}. Recovery attempt: {self.recovery_attempts[func_name]}")
             
             # Return failure with error info
             return False, None, error_context
@@ -155,7 +158,13 @@ class InfraAgent:
         
         # Use the error handler to handle the error
         try:
-            # Call error handler with appropriate context
+            # Ensure error handler is initialized
+            if not hasattr(self, 'error_handler') or self.error_handler is None:
+                logger.critical("Error handler not initialized! Creating one now.")
+                self.error_handler = ErrorLoopHandler()
+            
+            # Call error handler with appropriate context and trace for troubleshooting
+            logger.debug(f"Calling error_handler.handle_error with type: {error_info.get('error_type')}")
             recovery_success, ai_solution = self.error_handler.handle_error(
                 error_type=error_info.get('error_type', 'unknown_error'),
                 message=error_info.get('error_message', 'Unknown error'),
@@ -164,6 +173,8 @@ class InfraAgent:
             )
             
             # Log the recovery result
+            logger.info(f"Error handler returned: success={recovery_success}, solution={'provided' if ai_solution else 'none'}")
+            
             if recovery_success:
                 logger.info(f"Successfully recovered from {error_info.get('error_type')} error")
                 # Transition back to previous state
@@ -707,37 +718,40 @@ class InfraAgent:
         """Run a specific action with error handling"""
         logger.info(f"Running action: {action}")
         
-        # Map actions to methods
-        action_map = {
-            "analyze": self.analyze_infrastructure,
-            "optimize": lambda: self.optimize_infrastructure(self.analyze_infrastructure()),
-            "secure": self.secure_infrastructure,
-            "visualize": self.visualize_infrastructure,
-            "auto": self._run_auto_mode
-        }
+        # Update state
+        self.current_state = WorkflowState.INITIALIZING
         
-        if action not in action_map:
-            error_message = f"Unknown action: {action}"
-            logger.error(error_message)
-            return {"status": "error", "message": error_message}
+        # Add to action history
+        self.action_history.append({
+            "action": action,
+            "timestamp": time.time()
+        })
         
         try:
+            # Dispatch to appropriate method based on action
+            dispatch = {
+                "analyze": self.analyze_infrastructure,
+                "optimize": self.optimize_infrastructure,
+                "secure": self.secure_infrastructure,
+                "visualize": self.visualize_infrastructure,
+                "auto": self._run_auto_mode
+            }
+            
+            if action not in dispatch:
+                raise ValueError(f"Unknown action: {action}")
+                
             # Run the action
-            result = action_map[action]()
+            result = dispatch[action]()
             
-            # Check if action succeeded
-            if isinstance(result, dict) and result.get("status") == "error":
-                self.current_state = WorkflowState.FAILED
-                return result
-            
-            # Update workflow state to completed
+            # Update state
             self.current_state = WorkflowState.COMPLETED
             
             # Add error report if available
             if hasattr(self, 'error_handler'):
                 result["error_report"] = self.error_handler.get_error_report()
-            
+                
             return result
+            
         except Exception as e:
             # Handle any unhandled exceptions
             error_type = type(e).__name__
@@ -747,6 +761,12 @@ class InfraAgent:
             logger.error(f"Unhandled error in run_action: {error_type}: {error_message}")
             logger.debug(f"Stack trace: {stack_trace}")
             
+            # Ensure error handler exists
+            if not hasattr(self, 'error_handler') or self.error_handler is None:
+                logger.critical("Error handler not initialized! Creating one now.")
+                self.error_handler = ErrorLoopHandler()
+                
+            # Detailed context for error handling
             error_context = {
                 "function": "run_action",
                 "action": action,
@@ -756,8 +776,15 @@ class InfraAgent:
                 "timestamp": time.time()
             }
             
-            # Try error handling flow
+            # Force debug output to trace error handling
+            logger.info(f"Calling handle_error_flow with context: {error_context}")
+            
+            # Try error handling flow with more context
             recovery_success, solution = self.handle_error_flow(error_context)
+            
+            # Log recovery result
+            logger.info(f"Recovery success: {recovery_success}")
+            logger.info(f"Solution provided: {solution is not None}")
             
             if not recovery_success:
                 self.current_state = WorkflowState.FAILED

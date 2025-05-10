@@ -1,0 +1,136 @@
+2025-05-10 13:00:10,099 - WARNING - Gemini API not available. AI-powered error handling disabled.
+2025-05-10 13:00:10,099 - INFO - === Testing error recovery in agentic workflow ===
+2025-05-10 13:00:10,099 - WARNING - Gemini API not available. AI-powered error handling disabled.
+2025-05-10 13:00:10,099 - WARNING - GEMINI_API_KEY not found. Operating in limited mode.
+2025-05-10 13:00:10,099 - INFO - Running analyze action (should fail)...
+2025-05-10 13:00:10,099 - INFO - Running action: analyze
+2025-05-10 13:00:10,099 - INFO - Analyzing infrastructure in /Users/hoomehr/projects/Inframate
+2025-05-10 13:00:10,099 - INFO - Intentionally raising an error to test recovery flow
+2025-05-10 13:00:10,100 - ERROR - Error in _analyze_infrastructure_impl_error: ValueError: TEST ERROR: This is an intentional error to test recovery
+2025-05-10 13:00:10,100 - INFO - Captured error in _analyze_infrastructure_impl_error. Recovery attempt: 1
+2025-05-10 13:00:10,100 - INFO - Starting error handling flow for error in _analyze_infrastructure_impl_error
+2025-05-10 13:00:10,100 - INFO - Error type: ValueError
+2025-05-10 13:00:10,100 - INFO - Error message: TEST ERROR: This is an intentional error to test recovery
+2025-05-10 13:00:10,100 - ERROR - Error encountered: ValueError - TEST ERROR: This is an intentional error to test recovery
+2025-05-10 13:00:10,100 - CRITICAL - Unrecoverable error: ValueError
+Message: TEST ERROR: This is an intentional error to test recovery
+Severity: ErrorSeverity.MEDIUM
+Retry attempts: 0
+2025-05-10 13:00:10,100 - INFO - Error handler returned: success=False, solution=none
+2025-05-10 13:00:10,100 - INFO - ✅ Error detected correctly
+2025-05-10 13:00:10,100 - INFO - Error type: ValueError
+2025-05-10 13:00:10,100 - INFO - Error message: TEST ERROR: This is an intentional error to test recovery
+2025-05-10 13:00:10,100 - ERROR - ❌ Recovery flow was NOT triggered
+2025-05-10 13:00:10,100 - ERROR - This indicates a disconnection in the error handling system
+2025-05-10 13:00:10,100 - INFO - 
+=== SUGGESTED FIX ===
+2025-05-10 13:00:10,100 - INFO - The issue is likely in how errors are being passed to the recovery system.
+2025-05-10 13:00:10,100 - INFO - Here's what to check:
+2025-05-10 13:00:10,100 - INFO - 
+1. Verify the error handler initialization in agentic_workflow.py:
+2025-05-10 13:00:10,100 - INFO -    Make sure self.error_handler = ErrorLoopHandler() is properly initialized
+2025-05-10 13:00:10,100 - INFO - 
+2. Check execute_with_error_handling method in InfraAgent class:
+2025-05-10 13:00:10,100 - INFO -    Ensure it properly captures and passes errors to handle_error_flow
+2025-05-10 13:00:10,100 - INFO - 
+3. Fix connection between agentic_workflow.py and error_handler.py:
+2025-05-10 13:00:10,100 - INFO -    Add this patch to scripts/agentic_workflow.py:
+2025-05-10 13:00:10,100 - INFO - 
+def handle_error_flow(self, error_info: Dict) -> Tuple[bool, Optional[Dict]]:
+    # Update workflow state
+    previous_state = self.current_state
+    self.current_state = WorkflowState.ERROR_HANDLING
+    
+    # Log error handling start
+    logger.info(f"Starting error handling flow for error in {error_info.get('function')}")
+    logger.info(f"Error type: {error_info.get('error_type')}")
+    logger.info(f"Error message: {error_info.get('error_message')}")
+    
+    # Determine error severity based on type and context
+    severity = self._determine_error_severity(error_info)
+    
+    # Use the error handler to handle the error
+    try:
+        # Call error handler with appropriate context and trace for troubleshooting
+        logger.debug(f"Calling error_handler.handle_error with type: {error_info.get('error_type')}")
+        recovery_success, ai_solution = self.error_handler.handle_error(
+            error_type=error_info.get('error_type', 'unknown_error'),
+            message=error_info.get('error_message', 'Unknown error'),
+            severity=severity,
+            context_data=error_info
+        )
+        
+        # Log result from error handler
+        logger.info(f"Error handler returned: success={recovery_success}, solution={'provided' if ai_solution else 'none'}")
+        
+        # Rest of method remains the same...
+        
+2025-05-10 13:00:10,100 - INFO - 
+4. Verify error handler is correctly processing errors:
+2025-05-10 13:00:10,100 - INFO -    Check handle_error method in ErrorLoopHandler class
+2025-05-10 13:00:10,100 - INFO - 
+5. Add direct connection in run_action to ensure errors always trigger recovery:
+2025-05-10 13:00:10,100 - INFO - 
+def run_action(self, action: str) -> Dict[str, Any]:
+    try:
+        # Existing code...
+    except Exception as e:
+        # Handle any unhandled exceptions
+        error_type = type(e).__name__
+        error_message = str(e)
+        stack_trace = traceback.format_exc()
+        
+        logger.error(f"Unhandled error in run_action: {error_type}: {error_message}")
+        
+        # Ensure error handler exists
+        if not hasattr(self, 'error_handler') or self.error_handler is None:
+            logger.critical("Error handler not initialized! Creating one now.")
+            self.error_handler = ErrorLoopHandler()
+            
+        # More detailed context for debugging
+        error_context = {
+            "function": "run_action",
+            "action": action,
+            "error_type": error_type,
+            "error_message": error_message,
+            "stack_trace": stack_trace,
+            "timestamp": time.time()
+        }
+        
+        # Force debug output to trace error handling
+        logger.info(f"Calling handle_error_flow with context: {error_context}")
+        
+        # Try error handling flow with more context
+        recovery_success, solution = self.handle_error_flow(error_context)
+        
+        # Log recovery result
+        logger.info(f"Recovery success: {recovery_success}")
+        logger.info(f"Solution provided: {solution is not None}")
+        
+        # Rest of method remains the same...
+        
+2025-05-10 13:00:10,100 - INFO - 
+Applying these fixes should ensure errors properly trigger the recovery flow.
+2025-05-10 13:00:10,100 - INFO - === Testing direct error flow ===
+2025-05-10 13:00:10,101 - WARNING - Gemini API not available. AI-powered error handling disabled.
+2025-05-10 13:00:10,101 - INFO - Running error workflow...
+2025-05-10 13:00:10,101 - INFO - Starting action: analyze
+2025-05-10 13:00:10,101 - INFO - Intentionally raising an error in direct error flow
+2025-05-10 13:00:10,101 - ERROR - Error in action analyze: ValueError: TEST ERROR: Intentional error in direct error flow
+2025-05-10 13:00:10,101 - INFO - Starting error handling flow for validation_error
+2025-05-10 13:00:10,101 - INFO - Step 1: Handling error with AI-powered handler
+2025-05-10 13:00:10,101 - ERROR - Error encountered: validation_error - TEST ERROR: Intentional error in direct error flow
+2025-05-10 13:00:10,101 - CRITICAL - Unrecoverable error: validation_error
+Message: TEST ERROR: Intentional error in direct error flow
+Severity: ErrorSeverity.MEDIUM
+Retry attempts: 0
+2025-05-10 13:00:10,101 - WARNING - Recovery failed
+2025-05-10 13:00:10,101 - INFO - Step 4: Updating error report with recovery details
+2025-05-10 13:00:10,101 - INFO - Error handling flow completed in 0.00 seconds
+2025-05-10 13:00:10,101 - INFO - Recovery success: False
+2025-05-10 13:00:10,101 - INFO - ✅ Error detected in direct error flow
+2025-05-10 13:00:10,101 - INFO - ✅ Recovery was attempted 1 times
+2025-05-10 13:00:10,101 - INFO -   Attempt 1:
+2025-05-10 13:00:10,101 - INFO -     Error type: validation_error
+2025-05-10 13:00:10,101 - INFO -     Success: False
+2025-05-10 13:00:10,101 - WARNING - ⚠️ No AI solution was generated
