@@ -29,111 +29,6 @@ on:
         type: boolean
 
 jobs:
-  analyze-and-deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-          
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Initialize Error Handler
-        run: |
-          python -c "
-          from inframate.utils.error_handler import ErrorLoopHandler, ErrorSeverity
-          
-          # Initialize global error handler
-          error_handler = ErrorLoopHandler()
-          
-          # Store handler in environment for other steps
-          print(f'ERROR_HANDLER_INITIALIZED=true')
-          "
-        id: init-error-handler
-
-      - name: Analyze Repository
-        if: success()
-        run: |
-          python -c "
-          from inframate.utils.error_handler import ErrorLoopHandler, ErrorSeverity
-          
-          try:
-              # Your repository analysis code here
-              pass
-          except Exception as e:
-              error_handler = ErrorLoopHandler()
-              result = error_handler.handle_error(
-                  'analysis_error',
-                  str(e),
-                  ErrorSeverity.HIGH
-              )
-              if not result:
-                  exit(1)
-          "
-        
-      - name: Generate Infrastructure
-        if: success()
-        run: |
-          python -c "
-          from inframate.utils.error_handler import ErrorLoopHandler, ErrorSeverity
-          
-          try:
-              # Your infrastructure generation code here
-              pass
-          except Exception as e:
-              error_handler = ErrorLoopHandler()
-              result = error_handler.handle_error(
-                  'generation_error',
-                  str(e),
-                  ErrorSeverity.HIGH
-              )
-              if not result:
-                  exit(1)
-          "
-
-      - name: Deploy Infrastructure
-        if: success()
-        run: |
-          python -c "
-          from inframate.utils.error_handler import ErrorLoopHandler, ErrorSeverity
-          
-          try:
-              # Your deployment code here
-              pass
-          except Exception as e:
-              error_handler = ErrorLoopHandler()
-              result = error_handler.handle_error(
-                  'deployment_error',
-                  str(e),
-                  ErrorSeverity.CRITICAL
-              )
-              if not result:
-                  exit(1)
-          "
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-
-      - name: Report Status
-        if: always()
-        run: |
-          python -c "
-          from inframate.utils.error_handler import ErrorLoopHandler
-          
-          handler = ErrorLoopHandler()
-          
-          # Generate error report from history
-          print('Error Report:')
-          for error in handler.supervisor.error_history:
-              print(f'- {error.error_type}: {error.message} (Retries: {error.retry_count})')
-          "
-
   agentic-infra-management:
     runs-on: ubuntu-latest
     steps:
@@ -175,21 +70,54 @@ jobs:
           mkdir -p scripts
           cp -r inframate/scripts/visualization scripts/
       
-      - name: Run agentic workflow
+      - name: Run agentic workflow with AI error handling
+        id: run-workflow
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ACTION: ${{ github.event.inputs.action }}
           AUTONOMOUS_MODE: ${{ github.event.inputs.autonomous_mode }}
         run: |
-          python inframate/scripts/agentic_workflow.py \
+          # Run the workflow with error handling
+          python inframate/scripts/agentic_error_workflow.py \
             --repo-path target_repo \
             --action $ACTION \
-            --autonomous $AUTONOMOUS_MODE > analysis_results.json
+            --autonomous $AUTONOMOUS_MODE \
+            --output analysis_results.json
+          
+          # Check if we have errors with AI solutions
+          if jq -e '.success == false' analysis_results.json > /dev/null; then
+            echo "::warning::Workflow encountered errors - Gemini AI has provided solutions"
+            
+            # Extract AI solution as markdown
+            jq -r '.error.ai_solution | 
+              "## 🤖 AI Analysis of the Error\n\n" +
+              "### Root Cause\n" + 
+              (.root_cause // "Unknown") + "\n\n" +
+              "### Solution\n" + 
+              (.solution // "No solution available") + "\n\n" +
+              "### Prevention\n" + 
+              (.prevention // "No prevention tips available")' \
+              analysis_results.json > ai_solution.md
+            
+            echo "AI_SOLUTION_AVAILABLE=true" >> $GITHUB_ENV
+            echo "has_errors=true" >> $GITHUB_OUTPUT
+          else 
+            echo "::notice::Workflow completed successfully with no errors"
+            echo "has_errors=false" >> $GITHUB_OUTPUT
+          fi
           
           # Display summary of results
           echo "✅ Analysis completed! Summary of findings:"
           jq -r '.analysis.resource_counts | length | "Found \(.) unique AWS resource types"' analysis_results.json 2>/dev/null || echo "No resource count available"
           jq -r '.optimization.recommendations | length | "\(.) optimization recommendations found"' analysis_results.json 2>/dev/null || echo "No optimization recommendations available"
+          
+      - name: Create Issue with AI Error Analysis
+        if: steps.run-workflow.outputs.has_errors == 'true'
+        uses: peter-evans/create-issue-from-file@v4
+        with:
+          title: "🚨 Inframate Error with AI Solution"
+          content-filepath: ai_solution.md
+          labels: error, ai-solution
           
       - name: Create Pull Request with findings
         if: github.event.inputs.action != 'analyze'
@@ -209,5 +137,6 @@ jobs:
           name: inframate-analysis
           path: |
             analysis_results.json
+            ai_solution.md
             target_repo/visualizations/
           retention-days: 7 
