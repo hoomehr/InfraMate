@@ -77,12 +77,17 @@ jobs:
           ACTION: ${{ github.event.inputs.action }}
           AUTONOMOUS_MODE: ${{ github.event.inputs.autonomous_mode }}
         run: |
+          # Construct command based on autonomous mode
+          CMD="python inframate/scripts/agentic_error_workflow.py --repo-path target_repo --action $ACTION --output analysis_results.json"
+          
+          # Add autonomous flag only if true
+          if [ "$AUTONOMOUS_MODE" = "true" ]; then
+            CMD="$CMD --autonomous"
+          fi
+          
           # Run the workflow with error handling
-          python inframate/scripts/agentic_error_workflow.py \
-            --repo-path target_repo \
-            --action $ACTION \
-            --autonomous $AUTONOMOUS_MODE \
-            --output analysis_results.json
+          echo "Running command: $CMD"
+          eval $CMD
           
           # Check if we have errors with AI solutions
           if jq -e '.success == false' analysis_results.json > /dev/null; then
