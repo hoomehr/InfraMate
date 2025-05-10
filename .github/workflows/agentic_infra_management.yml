@@ -219,7 +219,7 @@ jobs:
           python scripts/visualization/generate_report.py --input "${{ steps.run_workflow.outputs.output_file }}" --output "${ARTIFACTS_DIR}/inframate_report.html"
       
       - name: Upload artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: inframate-artifacts-${{ env.RUN_TIMESTAMP }}
           path: ${{ env.ARTIFACTS_DIR }}
