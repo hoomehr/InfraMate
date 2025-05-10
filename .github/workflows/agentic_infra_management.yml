@@ -27,18 +27,28 @@ on:
         required: true
         default: 'false'
         type: boolean
+      error_mode:
+        description: 'Error handling mode (auto, verbose, silent)'
+        required: true
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - verbose
+          - silent
 
 jobs:
   agentic-infra-management:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Inframate
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v3
         with:
-          path: inframate
-          
+          fetch-depth: 0
+      
       - name: Checkout target repository
-        uses: actions/checkout@v4
+        if: ${{ github.event.inputs.target_repo != '.' }}
+        uses: actions/checkout@v3
         with:
           repository: ${{ github.event.inputs.target_repo }}
           ref: ${{ github.event.inputs.target_branch }}
@@ -49,99 +59,179 @@ jobs:
         with:
           python-version: '3.10'
           
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: '1.5.0'
-          
       - name: Install dependencies
         run: |
-          # Install system dependencies
-          sudo apt-get update
-          sudo apt-get install -y graphviz
-          
-          # Install Python dependencies
           python -m pip install --upgrade pip
-          pip install -r inframate/scripts/visualization/requirements.txt
-          pip install google-generativeai langchain requests
-          
-      - name: Copy visualization scripts
+          pip install -r requirements.txt
+          pip install google-generativeai
+
+      - name: Set up error capture
+        id: setup_error_capture
         run: |
-          mkdir -p scripts
-          cp -r inframate/scripts/visualization scripts/
+          mkdir -p artifacts
+          echo "ARTIFACTS_DIR=$(pwd)/artifacts" >> $GITHUB_ENV
+          
+          # Create an error tracking file
+          echo "[]" > artifacts/errors.json
+          
+          # Timestamp for the run
+          echo "RUN_TIMESTAMP=$(date +%Y%m%d_%H%M%S)" >> $GITHUB_ENV
       
-      - name: Run agentic workflow with AI error handling
-        id: run-workflow
+      - name: Run agentic workflow with error handling
+        id: run_workflow
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          ACTION: ${{ github.event.inputs.action }}
-          AUTONOMOUS_MODE: ${{ github.event.inputs.autonomous_mode }}
         run: |
-          # Construct command based on autonomous mode
-          CMD="python inframate/scripts/agentic_error_workflow.py --repo-path target_repo --action $ACTION --output analysis_results.json"
-          
-          # Add autonomous flag only if true
-          if [ "$AUTONOMOUS_MODE" = "true" ]; then
-            CMD="$CMD --autonomous"
+          # Determine the target repository path
+          if [ "${{ github.event.inputs.target_repo }}" == "." ]; then
+            TARGET_REPO_PATH="$(pwd)"
+          else
+            TARGET_REPO_PATH="$(pwd)/target_repo"
           fi
+          
+          # Determine the action
+          ACTION="${{ github.event.inputs.action || 'analyze' }}"
+          
+          # Determine if autonomous mode
+          if [ "${{ github.event.inputs.autonomous_mode }}" == "true" ]; then
+            AUTONOMOUS_FLAG="--autonomous"
+          else
+            AUTONOMOUS_FLAG=""
+          fi
+          
+          # Determine error mode
+          ERROR_MODE="${{ github.event.inputs.error_mode || 'auto' }}"
+          
+          # Set output file
+          OUTPUT_FILE="${ARTIFACTS_DIR}/results_${RUN_TIMESTAMP}.json"
           
           # Run the workflow with error handling
-          echo "Running command: $CMD"
-          eval $CMD
+          COMMAND="./scripts/run_agentic_workflow.sh --repo-path \"${TARGET_REPO_PATH}\" --action ${ACTION} ${AUTONOMOUS_FLAG} --output \"${OUTPUT_FILE}\" --error-mode ${ERROR_MODE}"
+          echo "Running command: ${COMMAND}"
           
-          # Check if we have errors with AI solutions
-          if jq -e '.success == false' analysis_results.json > /dev/null; then
-            echo "::warning::Workflow encountered errors - Gemini AI has provided solutions"
+          # Execute and capture output
+          ${COMMAND} 2>&1 | tee ${ARTIFACTS_DIR}/workflow_output.log
+          
+          # Capture the exit code
+          EXIT_CODE=${PIPESTATUS[0]}
+          echo "workflow_exit_code=${EXIT_CODE}" >> $GITHUB_OUTPUT
+          
+          # Check if the output file was created
+          if [ -f "${OUTPUT_FILE}" ]; then
+            echo "output_file=${OUTPUT_FILE}" >> $GITHUB_OUTPUT
             
-            # Extract AI solution as markdown
-            jq -r '.error.ai_solution | 
-              "## 🤖 AI Analysis of the Error\n\n" +
-              "### Root Cause\n" + 
-              (.root_cause // "Unknown") + "\n\n" +
-              "### Solution\n" + 
-              (.solution // "No solution available") + "\n\n" +
-              "### Prevention\n" + 
-              (.prevention // "No prevention tips available")' \
-              analysis_results.json > ai_solution.md
-            
-            echo "AI_SOLUTION_AVAILABLE=true" >> $GITHUB_ENV
+            # Check for errors in the output
+            if grep -q "\"success\": false" "${OUTPUT_FILE}"; then
+              echo "has_errors=true" >> $GITHUB_OUTPUT
+              
+              # Extract error details for creating an issue
+              ERROR_TYPE=$(jq -r '.error.type // "unknown"' "${OUTPUT_FILE}")
+              ERROR_MSG=$(jq -r '.error.message // "Unknown error"' "${OUTPUT_FILE}")
+              
+              echo "error_type=${ERROR_TYPE}" >> $GITHUB_OUTPUT
+              echo "error_message=${ERROR_MSG}" >> $GITHUB_OUTPUT
+            else
+              echo "has_errors=false" >> $GITHUB_OUTPUT
+            fi
+          else
             echo "has_errors=true" >> $GITHUB_OUTPUT
-          else 
-            echo "::notice::Workflow completed successfully with no errors"
-            echo "has_errors=false" >> $GITHUB_OUTPUT
+            echo "error_type=execution_failure" >> $GITHUB_OUTPUT
+            echo "error_message=Workflow failed to produce output file" >> $GITHUB_OUTPUT
           fi
           
-          # Display summary of results
-          echo "✅ Analysis completed! Summary of findings:"
-          jq -r '.analysis.resource_counts | length | "Found \(.) unique AWS resource types"' analysis_results.json 2>/dev/null || echo "No resource count available"
-          jq -r '.optimization.recommendations | length | "\(.) optimization recommendations found"' analysis_results.json 2>/dev/null || echo "No optimization recommendations available"
+          exit ${EXIT_CODE}
+        continue-on-error: true
+      
+      - name: Generate error report
+        if: steps.run_workflow.outputs.has_errors == 'true'
+        run: |
+          echo "## Inframate Workflow Error" > ${ARTIFACTS_DIR}/error_report.md
+          echo "" >> ${ARTIFACTS_DIR}/error_report.md
+          echo "### Error Details" >> ${ARTIFACTS_DIR}/error_report.md
+          echo "- **Type:** ${{ steps.run_workflow.outputs.error_type }}" >> ${ARTIFACTS_DIR}/error_report.md
+          echo "- **Message:** ${{ steps.run_workflow.outputs.error_message }}" >> ${ARTIFACTS_DIR}/error_report.md
+          echo "" >> ${ARTIFACTS_DIR}/error_report.md
           
-      - name: Create Issue with AI Error Analysis
-        if: steps.run-workflow.outputs.has_errors == 'true'
-        uses: peter-evans/create-issue-from-file@v4
-        with:
-          title: "🚨 Inframate Error with AI Solution"
-          content-filepath: ai_solution.md
-          labels: error, ai-solution
+          # Extract AI solution if available
+          if [ -f "${{ steps.run_workflow.outputs.output_file }}" ]; then
+            echo "### AI Solution" >> ${ARTIFACTS_DIR}/error_report.md
+            echo "" >> ${ARTIFACTS_DIR}/error_report.md
+            
+            # Extract root cause
+            ROOT_CAUSE=$(jq -r '.error.ai_solution.root_cause // "Unknown"' "${{ steps.run_workflow.outputs.output_file }}")
+            echo "#### Root Cause" >> ${ARTIFACTS_DIR}/error_report.md
+            echo "${ROOT_CAUSE}" >> ${ARTIFACTS_DIR}/error_report.md
+            echo "" >> ${ARTIFACTS_DIR}/error_report.md
+            
+            # Extract solution
+            SOLUTION=$(jq -r '.error.ai_solution.solution // "No solution available"' "${{ steps.run_workflow.outputs.output_file }}")
+            echo "#### Solution" >> ${ARTIFACTS_DIR}/error_report.md
+            echo "${SOLUTION}" >> ${ARTIFACTS_DIR}/error_report.md
+            echo "" >> ${ARTIFACTS_DIR}/error_report.md
+            
+            # Extract prevention
+            PREVENTION=$(jq -r '.error.ai_solution.prevention // "No prevention tips available"' "${{ steps.run_workflow.outputs.output_file }}")
+            echo "#### Prevention" >> ${ARTIFACTS_DIR}/error_report.md
+            echo "${PREVENTION}" >> ${ARTIFACTS_DIR}/error_report.md
+          else
+            echo "No AI solution available." >> ${ARTIFACTS_DIR}/error_report.md
+          fi
           
-      - name: Create Pull Request with findings
-        if: github.event.inputs.action != 'analyze'
-        uses: peter-evans/create-pull-request@v5
+          # Add error recovery history if available
+          if [ -f "${{ steps.run_workflow.outputs.output_file }}" ]; then
+            RECOVERY_ATTEMPTS=$(jq -r '.error.recovery_attempts | length // 0' "${{ steps.run_workflow.outputs.output_file }}")
+            
+            if [ "${RECOVERY_ATTEMPTS}" != "0" ] && [ "${RECOVERY_ATTEMPTS}" != "null" ]; then
+              echo "### Recovery Attempts" >> ${ARTIFACTS_DIR}/error_report.md
+              echo "" >> ${ARTIFACTS_DIR}/error_report.md
+              echo "The system made ${RECOVERY_ATTEMPTS} recovery attempts:" >> ${ARTIFACTS_DIR}/error_report.md
+              echo "" >> ${ARTIFACTS_DIR}/error_report.md
+              
+              jq -r '.error.recovery_attempts[] | "- **Attempt:** \(.timestamp)\n  - **Success:** \(.success)\n  - **Duration:** \(.duration) seconds\n"' "${{ steps.run_workflow.outputs.output_file }}" >> ${ARTIFACTS_DIR}/error_report.md
+            fi
+          fi
+      
+      - name: Create issue for unresolved errors
+        if: steps.run_workflow.outputs.has_errors == 'true'
+        uses: actions/github-script@v6
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          path: target_repo
-          commit-message: "🤖 Inframate Agent: Infrastructure improvements"
-          title: "🤖 Inframate Agent: ${{ github.event.inputs.action }} recommendations"
-          body-path: analysis_results.json
-          branch: "inframate/agent-recommendations"
-          base: ${{ github.event.inputs.target_branch }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            
+            // Read the error report
+            const errorReport = fs.readFileSync('${{ env.ARTIFACTS_DIR }}/error_report.md', 'utf8');
+            
+            // Create an issue with the error report
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Inframate Error: ${{ steps.run_workflow.outputs.error_type }}`,
+              body: errorReport,
+              labels: ['error', 'inframate', 'automated']
+            });
+            
+            console.log(`Created issue #${issue.data.number}`);
+      
+      - name: Generate visualization (on success)
+        if: steps.run_workflow.outputs.has_errors != 'true' && (github.event.inputs.action == 'visualize' || github.event.inputs.action == 'auto')
+        run: |
+          python scripts/visualization/generate_report.py --input "${{ steps.run_workflow.outputs.output_file }}" --output "${ARTIFACTS_DIR}/inframate_report.html"
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: inframate-artifacts-${{ env.RUN_TIMESTAMP }}
+          path: ${{ env.ARTIFACTS_DIR }}
           
-      - name: Upload results
-        uses: actions/upload-artifact@v4
-        with:
-          name: inframate-analysis
-          path: |
-            analysis_results.json
-            ai_solution.md
-            target_repo/visualizations/
-          retention-days: 7 
+      - name: Report workflow status
+        run: |
+          if [ "${{ steps.run_workflow.outputs.has_errors }}" == "true" ]; then
+            echo "::error::Inframate workflow failed with error: ${{ steps.run_workflow.outputs.error_message }}"
+            echo "An issue has been created with error details and AI-powered solution."
+          else
+            echo "::notice::Inframate workflow completed successfully."
+          fi
+          
+          # Exit with the original workflow exit code
+          exit ${{ steps.run_workflow.outputs.workflow_exit_code }} 
