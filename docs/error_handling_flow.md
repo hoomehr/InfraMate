@@ -263,56 +263,70 @@ if not results["success"]:
 
 ### 4. Via Independent Error Recovery Workflow
 
-For continuous integration environments, you can trigger error recovery as a standalone workflow using:
+Inframate includes a powerful error recovery workflow that can fix issues in any failed workflow, automatically analyze errors, and attempt recovery.
 
-```yaml
-name: Trigger Error Recovery
+#### Automatic Error Recovery Modes
 
-on:
-  workflow_dispatch:
-    inputs:
-      error_type:
-        description: 'Error type to fix'
-        required: true
-        default: 'terraform_error'
+The error recovery workflow can be triggered in several ways:
 
-jobs:
-  trigger-recovery:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Trigger Recovery Workflow
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'error_recovery.yml',
-              ref: 'main',
-              inputs: {
-                error_type: '${{ github.event.inputs.error_type }}',
-                error_message: 'Manually triggered recovery',
-                repo_path: '.',
-                autonomous_mode: 'true'
-              }
-            });
+1. **Automatic Trigger**: Runs automatically when any workflow in the repository fails
+   ```yaml
+   # This happens automatically whenever any workflow fails
+   # No manual configuration needed!
+   ```
+
+2. **Scheduled Checks**: Runs hourly to find and fix any failed workflows
+   ```yaml
+   # Configured to run every hour to catch any failed workflows
+   # No manual configuration needed!
+   ```
+
+3. **Manual Trigger**: Triggered manually from GitHub UI or API for specific error types
+   ```yaml
+   # Manually triggered from GitHub Actions tab
+   # You can specify the error type, message, and workflow ID
+   ```
+
+4. **Programmatic Trigger**: Using the provided script to trigger recovery
+
+```bash
+# Trigger recovery for the latest failed workflow
+python examples/trigger_error_recovery.py --mode latest \
+  --repo-owner yourname --repo-name your-repo --token $GITHUB_TOKEN
+
+# Trigger recovery for a specific workflow with a specific error
+python examples/trigger_error_recovery.py --mode github \
+  --repo-owner yourname --repo-name your-repo --token $GITHUB_TOKEN \
+  --error-type terraform_error --message "Failed to apply Terraform" \
+  --workflow-id 12345678
 ```
 
-The error recovery workflow will:
+#### What the Error Recovery Workflow Does
 
-1. **Automatically trigger** when the Agentic Infrastructure Management workflow fails
-2. **Download artifacts** from the failed workflow and extract error information
-3. **Analyze the error** using the error handling system 
-4. **Attempt recovery** using AI-powered analysis and specific strategies
-5. **Generate a detailed report** with recovery results and AI-generated solutions
-6. **Create an issue** if recovery fails, or just report success if it works
+The error recovery workflow has powerful capabilities:
 
-You can also manually trigger the workflow from the GitHub Actions tab, specifying:
-- Error type (api_error, terraform_error, etc.)
-- Error message
-- Repository path
-- Whether to apply fixes automatically (autonomous mode)
+1. **Finds Failed Workflows**: Automatically detects the latest failed workflow runs
+2. **Extracts Error Information**: Downloads artifacts and analyzes logs to determine error type
+3. **Runs AI-Powered Analysis**: Uses Gemini to analyze the error and recommend solutions
+4. **Attempts Recovery**: Implements the recommended solution
+5. **Re-runs Failed Workflow**: If recovery is successful, automatically re-runs the original failed workflow
+6. **Reports Results**: Creates detailed reports and GitHub issues if needed
+
+This creates a completely autonomous error recovery system that can:
+- Monitor your repository for failures
+- Automatically fix common issues
+- Provide detailed AI-powered recovery reports
+- Keep your workflows running smoothly
+
+#### Configuration Options
+
+When manually triggering the workflow, you can configure:
+
+- **Error Type**: Specify the type of error (api_error, terraform_error, etc.)
+- **Error Message**: Provide the error message
+- **Workflow ID**: Target a specific workflow run (or leave empty for latest)
+- **Autonomous Mode**: Enable automatic application of fixes
+- **Repository Path**: Path within the repository to focus on
 
 This is especially useful for CI/CD pipelines, where you want infrastructure deployment to self-heal when errors occur.
 
