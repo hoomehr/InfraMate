@@ -237,6 +237,13 @@ jobs:
           name: ${{ inputs.artifact_name }}
           path: ${{ env.ARTIFACTS_DIR }}/manual_artifact
       
+      - name: Setup GitHub CLI
+        if: ${{ steps.determine_workflow.outputs.run_id != 'manual' && steps.determine_workflow.outputs.run_id != '' }}
+        run: |
+          mkdir -p ${ARTIFACTS_DIR}/logs
+          echo "Setting up GitHub CLI authentication..."
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+
       - name: Extract error information
         id: extract_error
         run: |
@@ -267,27 +274,34 @@ jobs:
           if [ "${{ steps.determine_workflow.outputs.run_id }}" != "manual" ] && [ "$AUTO_DETECT" == "true" ]; then
             echo "Auto-detecting error information from workflow ID: ${{ steps.determine_workflow.outputs.run_id }}"
             
-            # Get workflow run info (if we have GH CLI installed)
+            # Get workflow run info (if we have GH CLI installed and authenticated)
+            mkdir -p ${ARTIFACTS_DIR}/logs
             if command -v gh &> /dev/null; then
               echo "Using GitHub CLI to get workflow run details..."
-              mkdir -p ${ARTIFACTS_DIR}/logs
               
-              # Get run logs
-              gh run view ${{ steps.determine_workflow.outputs.run_id }} --log > ${ARTIFACTS_DIR}/logs/workflow.log 2>/dev/null || echo "Could not get workflow logs"
+              # Try to get run logs, but continue if it fails
+              gh run view ${{ steps.determine_workflow.outputs.run_id }} --log > ${ARTIFACTS_DIR}/logs/workflow.log 2>${ARTIFACTS_DIR}/logs/gh_errors.log || echo "Could not retrieve workflow logs (see ${ARTIFACTS_DIR}/logs/gh_errors.log for details)"
               
-              # Extract workflow name and status
-              WORKFLOW_INFO=$(gh run view ${{ steps.determine_workflow.outputs.run_id }} --json name,status 2>/dev/null || echo '{"name":"Unknown","status":"unknown"}')
-              
-              # Get a better workflow name if available
-              DETECTED_NAME=$(echo $WORKFLOW_INFO | jq -r '.name')
-              if [ "$DETECTED_NAME" != "null" ] && [ "$DETECTED_NAME" != "Unknown" ]; then
-                WORKFLOW_NAME="$DETECTED_NAME"
-                echo "Detected workflow name: $WORKFLOW_NAME"
+              # Only try to get workflow info if getting the logs worked
+              if [ -s "${ARTIFACTS_DIR}/logs/workflow.log" ]; then
+                # Extract workflow name and status
+                WORKFLOW_INFO=$(gh run view ${{ steps.determine_workflow.outputs.run_id }} --json name,status 2>/dev/null || echo '{"name":"Unknown","status":"unknown"}')
+                
+                # Get a better workflow name if available
+                DETECTED_NAME=$(echo $WORKFLOW_INFO | jq -r '.name')
+                if [ "$DETECTED_NAME" != "null" ] && [ "$DETECTED_NAME" != "Unknown" ]; then
+                  WORKFLOW_NAME="$DETECTED_NAME"
+                  echo "Detected workflow name: $WORKFLOW_NAME"
+                fi
+              else
+                echo "Failed to get workflow logs, will try to continue with artifacts only"
               fi
+            else
+              echo "GitHub CLI not available, skipping workflow log retrieval"
             fi
             
             # Look for error files in all extracted directories
-            ERROR_FILES=$(find $ARTIFACTS_DIR -type f -name "*.json" | grep -E "results|errors|output")
+            ERROR_FILES=$(find $ARTIFACTS_DIR -type f -name "*.json" | grep -E "results|errors|output" || echo "")
             
             if [ -n "$ERROR_FILES" ]; then
               # Use the first error file found
@@ -297,8 +311,8 @@ jobs:
               # Extract error type and message
               if [ -f "$ERROR_FILE" ]; then
                 # Try multiple JSON paths where error info might be stored
-                EXTRACTED_TYPE=$(jq -r '.error.type // .error_type // .type // "unknown_error"' "$ERROR_FILE")
-                EXTRACTED_MSG=$(jq -r '.error.message // .error_message // .message // "Unknown error"' "$ERROR_FILE")
+                EXTRACTED_TYPE=$(jq -r '.error.type // .error_type // .type // "unknown_error"' "$ERROR_FILE" 2>/dev/null || echo "unknown_error")
+                EXTRACTED_MSG=$(jq -r '.error.message // .error_message // .message // "Unknown error"' "$ERROR_FILE" 2>/dev/null || echo "Unknown error")
                 
                 if [ "$EXTRACTED_TYPE" != "null" ] && [ "$EXTRACTED_TYPE" != "" ]; then
                   ERROR_TYPE="$EXTRACTED_TYPE"
@@ -314,7 +328,7 @@ jobs:
               echo "No error files found in artifacts, trying to detect from logs"
               
               # Search logs for common error patterns if available
-              if [ -f "${ARTIFACTS_DIR}/logs/workflow.log" ]; then
+              if [ -f "${ARTIFACTS_DIR}/logs/workflow.log" ] && [ -s "${ARTIFACTS_DIR}/logs/workflow.log" ]; then
                 echo "Analyzing workflow logs for error patterns..."
                 
                 # Check for common error patterns
@@ -343,6 +357,8 @@ jobs:
                   fi
                   echo "Detected API rate limit error"
                 fi
+              else
+                echo "No usable log file found for error detection"
               fi
             fi
           fi
