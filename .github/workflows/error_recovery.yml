@@ -136,13 +136,19 @@ jobs:
             echo "Analysis source: Directly triggered by workflow_run event"
           elif [ "${{ github.event_name }}" == "schedule" ]; then
             # Scheduled check for failed workflows
-            RUN_ID="${{ fromJSON(steps.find_failed.outputs.result).runId }}"
-            WORKFLOW_NAME="${{ fromJSON(steps.find_failed.outputs.result).workflowName }}"
-            
-            if [ "$RUN_ID" != "null" ]; then
-              echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
-              echo "workflow_name=$WORKFLOW_NAME" >> $GITHUB_OUTPUT
-              echo "Analysis source: Scheduled check found failed workflow: $WORKFLOW_NAME"
+            if [ -n "${{ steps.find_failed.outputs.result }}" ]; then
+              # Parse the JSON safely with a fallback
+              RUN_ID="${{ fromJSON(steps.find_failed.outputs.result || '{"runId":null,"workflowName":"Unknown"}').runId }}"
+              WORKFLOW_NAME="${{ fromJSON(steps.find_failed.outputs.result || '{"runId":null,"workflowName":"Unknown"}').workflowName }}"
+              
+              if [ "$RUN_ID" != "null" ] && [ -n "$RUN_ID" ]; then
+                echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
+                echo "workflow_name=$WORKFLOW_NAME" >> $GITHUB_OUTPUT
+                echo "Analysis source: Scheduled check found failed workflow: $WORKFLOW_NAME"
+              else
+                echo "No failed workflows found to analyze"
+                exit 0
+              fi
             else
               echo "No failed workflows found to analyze"
               exit 0
