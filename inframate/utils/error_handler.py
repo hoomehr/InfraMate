@@ -71,7 +71,7 @@ class ErrorLoopHandler:
         try:
             genai.configure(api_key=api_key)
             # Using the most capable model for error analysis
-            return genai.GenerativeModel('gemini-1.5-pro')
+            return genai.GenerativeModel('gemini-2.5-pro-exp-03-25')
         except Exception as e:
             self.logger.error(f"Failed to initialize Gemini API: {str(e)}")
             return None

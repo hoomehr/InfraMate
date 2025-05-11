@@ -23,7 +23,7 @@ def setup_gemini_api():
     
     # Configure Gemini API
     genai.configure(api_key=api_key)
-    return genai.GenerativeModel("gemini-2.0-flash")
+    return genai.GenerativeModel("gemini-2.5-pro-exp-03-25")
 
 def get_report_content(tfsec_report_path=None, checkov_report_path=None, tf_directory=None):
     """Read the security reports and Terraform files to create context"""

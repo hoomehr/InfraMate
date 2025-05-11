@@ -22,7 +22,7 @@ except ImportError:
 
 # Gemini API key and endpoint
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-exp-03-25:generateContent"
 
 def read_inframate_file(repo_path: str) -> Dict[str, Any]:
     """Read and parse the inframate.md file"""
@@ -56,7 +56,7 @@ def analyze_repository(repo_path):
         raise ValueError("GEMINI_API_KEY not set in environment")
     
     # Call Gemini API
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-exp-03-25:generateContent?key={api_key}"
     headers = {'Content-Type': 'application/json'}
     
     prompt = f"""
@@ -603,6 +603,30 @@ resource "aws_security_group" "app_sg" {
   }
 }
 """
+
+def call_gemini_api(prompt, api_key=None):
+    """Call Gemini API with the given prompt"""
+    if not api_key:
+        # Get Gemini API key from environment
+        api_key = os.getenv('GEMINI_API_KEY')
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY not set in environment")
+    
+    # Call Gemini API
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-exp-03-25:generateContent?key={api_key}"
+    headers = {'Content-Type': 'application/json'}
+    
+    data = {
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }]
+    }
+    
+    response = requests.post(url, headers=headers, json=data)
+    if response.status_code != 200:
+        raise Exception(f"Gemini API error: {response.text}")
+    
+    return response.json()
 
 def main():
     """Main entry point for Inframate"""

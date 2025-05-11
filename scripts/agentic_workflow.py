@@ -72,7 +72,7 @@ class InfraAgent:
         # Initialize Gemini AI if API key is available
         if self.gemini_api_key:
             genai.configure(api_key=self.gemini_api_key)
-            self.model = genai.GenerativeModel('gemini-2.0-flash')
+            self.model = genai.GenerativeModel('gemini-2.5-pro-exp-03-25')
             logger.info("Gemini AI initialized successfully")
         else:
             logger.warning("GEMINI_API_KEY not found. Operating in limited mode.")

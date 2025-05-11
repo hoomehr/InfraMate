@@ -88,7 +88,7 @@ class AgenticWorkflow:
         if self.gemini_api_key:
             try:
                 genai.configure(api_key=self.gemini_api_key)
-                self.gemini_model = genai.GenerativeModel('gemini-2.0-flash')
+                self.gemini_model = genai.GenerativeModel('gemini-2.5-pro-exp-03-25')
                 logger.info("Gemini API initialized successfully")
             except Exception as e:
                 logger.warning(f"Failed to initialize Gemini API: {e}")
