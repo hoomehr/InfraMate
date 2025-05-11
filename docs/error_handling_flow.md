@@ -261,6 +261,61 @@ if not results["success"]:
         print(f"Solution: {solution.get('solution')}")
 ```
 
+### 4. Via Independent Error Recovery Workflow
+
+For continuous integration environments, you can trigger error recovery as a standalone workflow using:
+
+```yaml
+name: Trigger Error Recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      error_type:
+        description: 'Error type to fix'
+        required: true
+        default: 'terraform_error'
+
+jobs:
+  trigger-recovery:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Recovery Workflow
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'error_recovery.yml',
+              ref: 'main',
+              inputs: {
+                error_type: '${{ github.event.inputs.error_type }}',
+                error_message: 'Manually triggered recovery',
+                repo_path: '.',
+                autonomous_mode: 'true'
+              }
+            });
+```
+
+The error recovery workflow will:
+
+1. **Automatically trigger** when the Agentic Infrastructure Management workflow fails
+2. **Download artifacts** from the failed workflow and extract error information
+3. **Analyze the error** using the error handling system 
+4. **Attempt recovery** using AI-powered analysis and specific strategies
+5. **Generate a detailed report** with recovery results and AI-generated solutions
+6. **Create an issue** if recovery fails, or just report success if it works
+
+You can also manually trigger the workflow from the GitHub Actions tab, specifying:
+- Error type (api_error, terraform_error, etc.)
+- Error message
+- Repository path
+- Whether to apply fixes automatically (autonomous mode)
+
+This is especially useful for CI/CD pipelines, where you want infrastructure deployment to self-heal when errors occur.
+
 ## Demos and Examples
 
 You can run the error flow demonstration script to see the error handling in action:
