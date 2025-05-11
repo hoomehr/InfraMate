@@ -115,7 +115,7 @@ When triggered, the workflow:
 
 ### Local Usage
 
-You can also run Inframate locally:
+You can run Inframate locally:
 
 1. Clone this repository
 2. Install dependencies:
@@ -126,10 +126,37 @@ You can also run Inframate locally:
    ```bash
    export GEMINI_API_KEY="your_gemini_api_key_here"
    ```
-4. Run Inframate:
+4. Generate infrastructure:
    ```bash
    python inframate_flow.py /path/to/your/repo
    ```
+   This will analyze your repository and generate Terraform files in a `terraform` directory.
+
+5. (Optional) Run Terraform operations:
+   ```bash
+   # Plan your infrastructure
+   python scripts/terraform_operations.py --terraform-dir /path/to/your/repo/terraform --operation plan
+   
+   # Apply your infrastructure
+   python scripts/terraform_operations.py --terraform-dir /path/to/your/repo/terraform --operation apply
+   
+   # View infrastructure outputs
+   python scripts/terraform_operations.py --terraform-dir /path/to/your/repo/terraform --operation output
+   
+   # Destroy infrastructure when done
+   python scripts/terraform_operations.py --terraform-dir /path/to/your/repo/terraform --operation destroy
+   ```
+
+### Workflow Steps
+
+Inframate has a modular workflow that allows you to:
+
+1. **Generate Infrastructure (Required)**: Analyzes your code and generates Terraform files
+2. **Plan Infrastructure (Optional)**: Reviews what changes will be made to your infrastructure
+3. **Apply Infrastructure (Optional)**: Creates/updates the actual infrastructure in your cloud provider
+4. **Deploy Application (Optional)**: Deploys your application code to the infrastructure
+
+Each step can be run independently, giving you full control over the workflow.
 
 ## Available Templates
 

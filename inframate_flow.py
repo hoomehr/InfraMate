@@ -655,8 +655,50 @@ def main():
         # Generate Terraform files
         terraform_dir = generate_terraform_files(repo_path, analysis_result, repo_info)
         
-        print("Inframate analysis complete!")
-        print(f"Terraform files generated in: {terraform_dir}")
+        print("\n✅ Inframate infrastructure generation complete!")
+        print(f"📁 Terraform files generated in: {terraform_dir}")
+        
+        # Display next steps as optional
+        print("\n🔷 Next Steps (Optional):")
+        print("  1. Review the generated Terraform files")
+        print("  2. Initialize Terraform:         terraform -chdir=%s init" % terraform_dir)
+        print("  3. Plan your infrastructure:     terraform -chdir=%s plan -out=tfplan" % terraform_dir)
+        print("  4. Apply the infrastructure:     terraform -chdir=%s apply tfplan" % terraform_dir)
+        print("  5. Deploy your application:      ./scripts/deploy.sh %s\n" % terraform_dir)
+        
+        # Create a helpful next-steps file in the terraform directory
+        next_steps_file = os.path.join(terraform_dir, "NEXT_STEPS.md")
+        with open(next_steps_file, 'w') as f:
+            f.write("# Next Steps\n\n")
+            f.write("Inframate has generated your infrastructure code. Follow these steps to deploy:\n\n")
+            f.write("## 1. Review the Generated Files\n")
+            f.write("- `main.tf`: Contains the main infrastructure resources\n")
+            f.write("- `variables.tf`: Defines input variables\n")
+            f.write("- `outputs.tf`: Defines outputs from the deployment\n")
+            f.write("- `terraform.tfvars`: Contains default values for variables\n")
+            f.write("- `README.md`: Documentation for the infrastructure\n\n")
+            
+            f.write("## 2. Initialize Terraform\n")
+            f.write("```bash\n")
+            f.write(f"cd {terraform_dir}\n")
+            f.write("terraform init\n")
+            f.write("```\n\n")
+            
+            f.write("## 3. Plan Your Infrastructure\n")
+            f.write("```bash\n")
+            f.write("terraform plan -out=tfplan\n")
+            f.write("```\n\n")
+            
+            f.write("## 4. Apply the Infrastructure\n")
+            f.write("```bash\n")
+            f.write("terraform apply tfplan\n")
+            f.write("```\n\n")
+            
+            f.write("## 5. Deploy Your Application\n")
+            f.write("Depending on your application, you may need to deploy your code to the infrastructure.\n")
+            f.write("Refer to the README.md for specific deployment instructions.\n")
+        
+        print(f"📝 A detailed guide has been saved to: {next_steps_file}")
         
     except Exception as e:
         print(f"Error: {str(e)}")
