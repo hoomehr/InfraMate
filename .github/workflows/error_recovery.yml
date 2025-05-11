@@ -434,44 +434,56 @@ jobs:
       
       - name: Generate recovery report
         run: |
-          echo "## Error Recovery Report" > ${ARTIFACTS_DIR}/recovery_report.md
-          echo "" >> ${ARTIFACTS_DIR}/recovery_report.md
-          echo "### Error Details" >> ${ARTIFACTS_DIR}/recovery_report.md
-          echo "- **Type:** ${{ steps.extract_error.outputs.error_type }}" >> ${ARTIFACTS_DIR}/recovery_report.md
-          echo "- **Message:** ${{ steps.extract_error.outputs.error_message }}" >> ${ARTIFACTS_DIR}/recovery_report.md
-          echo "- **Workflow:** ${{ steps.extract_error.outputs.workflow_name }}" >> ${ARTIFACTS_DIR}/recovery_report.md
-          echo "- **Workflow Run ID:** ${{ steps.determine_workflow.outputs.run_id || 'manual' }}" >> ${ARTIFACTS_DIR}/recovery_report.md
-          echo "- **Timestamp:** $(date)" >> ${ARTIFACTS_DIR}/recovery_report.md
-          echo "" >> ${ARTIFACTS_DIR}/recovery_report.md
+          mkdir -p "${ARTIFACTS_DIR}"
           
-          echo "### Recovery Result" >> ${ARTIFACTS_DIR}/recovery_report.md
-          if [ "${{ steps.recovery.outputs.recovery_success }}" == "true" ]; then
-            echo "✅ **Recovery successful**" >> ${ARTIFACTS_DIR}/recovery_report.md
+          # Create recovery report with properly escaped values
+          {
+            echo "## Error Recovery Report"
+            echo ""
+            echo "### Error Details"
+            echo "- **Type:** ${{ steps.extract_error.outputs.error_type }}"
+            echo "- **Message:** ${{ steps.extract_error.outputs.error_message }}"
+            echo "- **Workflow:** ${{ steps.extract_error.outputs.workflow_name }}"
+            echo "- **Workflow Run ID:** ${{ steps.determine_workflow.outputs.run_id || 'manual' }}"
+            echo "- **Timestamp:** $(date)"
+            echo ""
+            
+            echo "### Recovery Result"
+            if [ "${{ steps.recovery.outputs.recovery_success }}" == "true" ]; then
+              echo "✅ **Recovery successful**"
+            else
+              echo "❌ **Recovery failed**"
+            fi
+            echo ""
+            
+            echo "### Recovery Log"
+            echo '```'
+          } > "${ARTIFACTS_DIR}/recovery_report.md"
+          
+          # Append log content separately to avoid any parsing issues
+          if [ -f "${ARTIFACTS_DIR}/recovery_log.txt" ]; then
+            tail -n 50 "${ARTIFACTS_DIR}/recovery_log.txt" >> "${ARTIFACTS_DIR}/recovery_report.md"
           else
-            echo "❌ **Recovery failed**" >> ${ARTIFACTS_DIR}/recovery_report.md
+            echo "No recovery log found" >> "${ARTIFACTS_DIR}/recovery_report.md"
           fi
-          echo "" >> ${ARTIFACTS_DIR}/recovery_report.md
           
-          echo "### Recovery Log" >> ${ARTIFACTS_DIR}/recovery_report.md
-          echo '```' >> ${ARTIFACTS_DIR}/recovery_report.md
-          tail -n 50 ${ARTIFACTS_DIR}/recovery_log.txt >> ${ARTIFACTS_DIR}/recovery_report.md
-          echo '```' >> ${ARTIFACTS_DIR}/recovery_report.md
+          echo '```' >> "${ARTIFACTS_DIR}/recovery_report.md"
           
           # Extract AI solution if available
           if [ -f "${ARTIFACTS_DIR}/recovery_results.json" ]; then
-            echo "" >> ${ARTIFACTS_DIR}/recovery_report.md
-            echo "### AI Solution" >> ${ARTIFACTS_DIR}/recovery_report.md
-            
-            # Extract root cause
-            ROOT_CAUSE=$(jq -r '.error.ai_solution.root_cause // "Not available"' "${ARTIFACTS_DIR}/recovery_results.json")
-            echo "#### Root Cause" >> ${ARTIFACTS_DIR}/recovery_report.md
-            echo "${ROOT_CAUSE}" >> ${ARTIFACTS_DIR}/recovery_report.md
-            echo "" >> ${ARTIFACTS_DIR}/recovery_report.md
-            
-            # Extract solution
-            SOLUTION=$(jq -r '.error.ai_solution.solution // "No solution available"' "${ARTIFACTS_DIR}/recovery_results.json")
-            echo "#### Solution" >> ${ARTIFACTS_DIR}/recovery_report.md
-            echo "${SOLUTION}" >> ${ARTIFACTS_DIR}/recovery_report.md
+            {
+              echo ""
+              echo "### AI Solution"
+              
+              # Extract root cause
+              echo "#### Root Cause"
+              jq -r '.error.ai_solution.root_cause // "Not available"' "${ARTIFACTS_DIR}/recovery_results.json"
+              echo ""
+              
+              # Extract solution
+              echo "#### Solution"
+              jq -r '.error.ai_solution.solution // "No solution available"' "${ARTIFACTS_DIR}/recovery_results.json"
+            } >> "${ARTIFACTS_DIR}/recovery_report.md"
           fi
       
       - name: Create issue with recovery report
@@ -482,9 +494,12 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const report = fs.readFileSync('${{ env.ARTIFACTS_DIR }}/recovery_report.md', 'utf8');
+            const artifactsDir = process.env.ARTIFACTS_DIR;
+            const reportPath = `${artifactsDir}/recovery_report.md`;
             
             try {
+              const report = fs.readFileSync(reportPath, 'utf8');
+              
               const issue = await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -504,49 +519,94 @@ jobs:
               console.log('  issues: write');
               
               // Create a file with the error report instead
-              fs.writeFileSync('${ARTIFACTS_DIR}/error_report.md', report);
-              console.log('Error report saved to artifact: error_report.md');
+              try {
+                const errorReportPath = `${artifactsDir}/error_report.md`;
+                const report = fs.existsSync(reportPath) ? 
+                  fs.readFileSync(reportPath, 'utf8') : 
+                  "Failed to read recovery report";
+                  
+                fs.writeFileSync(errorReportPath, report);
+                console.log(`Error report saved to artifact: ${errorReportPath}`);
+              } catch (fsError) {
+                console.log(`Failed to save error report: ${fsError.message}`);
+              }
             }
       
       - name: Retry failed workflow if recovery was successful
         if: ${{ steps.recovery.outputs.recovery_success == 'true' && steps.determine_workflow.outputs.run_id != 'manual' && steps.determine_workflow.outputs.run_id != '' }}
         uses: actions/github-script@v6
+        continue-on-error: true
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const report = fs.readFileSync('${{ env.ARTIFACTS_DIR }}/recovery_report.md', 'utf8');
+            const artifactsDir = process.env.ARTIFACTS_DIR;
+            const reportPath = `${artifactsDir}/recovery_report.md`;
+            let report = "Error recovery successful";
             
-            // Get the workflow that failed
-            const workflowRun = await github.rest.actions.getWorkflowRun({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: ${{ steps.determine_workflow.outputs.run_id }}
-            });
+            try {
+              report = fs.readFileSync(reportPath, 'utf8');
+            } catch (error) {
+              console.log(`Could not read recovery report: ${error.message}`);
+            }
             
-            // Create comment on the workflow run
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: workflowRun.data.workflow_id,
-              ref: workflowRun.data.head_branch || 'main',
-              inputs: workflowRun.data.inputs || {}
-            });
-            
-            console.log(`Triggered re-run of workflow: ${workflowRun.data.workflow_id}`);
-            
-            // Create a comment in the PR if this was a PR-triggered workflow
-            if (workflowRun.data.pull_requests && workflowRun.data.pull_requests.length > 0) {
-              const prNumber = workflowRun.data.pull_requests[0].number;
-              
-              await github.rest.issues.createComment({
+            try {
+              // Get the workflow that failed
+              const workflowRun = await github.rest.actions.getWorkflowRun({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: prNumber,
-                body: `## ✅ Automated Error Recovery Successful\n\nError recovery for workflow "${workflowRun.data.name}" was successful. The workflow has been re-triggered.\n\n${report}`
+                run_id: ${{ steps.determine_workflow.outputs.run_id }}
               });
               
-              console.log(`Created comment on PR #${prNumber}`);
+              // Try to create comment on the workflow run
+              try {
+                await github.rest.actions.createWorkflowDispatch({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: workflowRun.data.workflow_id,
+                  ref: workflowRun.data.head_branch || 'main',
+                  inputs: workflowRun.data.inputs || {}
+                });
+                
+                console.log(`Triggered re-run of workflow: ${workflowRun.data.workflow_id}`);
+              } catch (dispatchError) {
+                console.log(`Could not trigger workflow re-run: ${dispatchError.message}`);
+                console.log('This could be due to permissions or the workflow no longer existing');
+              }
+              
+              // Create a comment in the PR if this was a PR-triggered workflow
+              if (workflowRun.data.pull_requests && workflowRun.data.pull_requests.length > 0) {
+                try {
+                  const prNumber = workflowRun.data.pull_requests[0].number;
+                  
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: prNumber,
+                    body: `## ✅ Automated Error Recovery Successful\n\nError recovery for workflow "${workflowRun.data.name}" was successful. The workflow has been re-triggered.\n\n${report}`
+                  });
+                  
+                  console.log(`Created comment on PR #${prNumber}`);
+                } catch (commentError) {
+                  console.log(`Could not create PR comment: ${commentError.message}`);
+                }
+              }
+            } catch (error) {
+              console.log(`Error retrieving workflow run ${${{ steps.determine_workflow.outputs.run_id }}}: ${error.message}`);
+              console.log('Could not retry the workflow. This might be due to the workflow run no longer existing or permission issues.');
+              
+              // Create a simple recovery success note in the repo (if we have permission)
+              try {
+                await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: `✅ Error Recovery Successful for Run ID: ${{ steps.determine_workflow.outputs.run_id }}`,
+                  body: `## Error Recovery Report\n\nError recovery was successful, but the original workflow run could not be found to trigger a re-run.\n\n${report}`,
+                  labels: ['automated', 'recovery-success']
+                });
+              } catch (issueError) {
+                console.log(`Could not create success issue: ${issueError.message}`);
+              }
             }
       
       - name: Upload recovery artifacts
