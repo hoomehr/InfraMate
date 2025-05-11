@@ -1,5 +1,12 @@
 name: Error Recovery Handler
 
+# Add permissions declaration at the workflow level
+permissions:
+  actions: write
+  contents: read
+  issues: write
+  pull-requests: write
+
 on:
   # Manually trigger error recovery for any failed workflow
   workflow_dispatch:
@@ -393,9 +400,18 @@ jobs:
           }
           EOF
           
+          # Validate error type
+          VALID_ERROR_TYPES="api_error terraform_error permission_error validation_error resource_error gemini_error network_error system_error"
+          if ! echo "$VALID_ERROR_TYPES" | grep -q "${{ steps.extract_error.outputs.error_type }}"; then
+            echo "Warning: Unknown error type ${{ steps.extract_error.outputs.error_type }}, using system_error instead"
+            ERROR_TYPE="system_error"
+          else
+            ERROR_TYPE="${{ steps.extract_error.outputs.error_type }}"
+          fi
+          
           # Run the error flow directly
           echo "Running error recovery flow..."
-          ERROR_RECOVERY_CMD="python scripts/debug_error_flow.py --action inject --error-type ${{ steps.extract_error.outputs.error_type }} --repo-path ${{ steps.extract_error.outputs.repo_path }}"
+          ERROR_RECOVERY_CMD="python scripts/debug_error_flow.py --action inject --error-type $ERROR_TYPE --repo-path ${{ steps.extract_error.outputs.repo_path }}"
           
           $ERROR_RECOVERY_CMD 2>&1 | tee ${ARTIFACTS_DIR}/recovery_log.txt
           
@@ -461,21 +477,36 @@ jobs:
       - name: Create issue with recovery report
         if: ${{ steps.recovery.outputs.recovery_success != 'true' }}
         uses: actions/github-script@v6
+        continue-on-error: true
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
             const report = fs.readFileSync('${{ env.ARTIFACTS_DIR }}/recovery_report.md', 'utf8');
             
-            const issue = await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `Error Recovery Failed: ${{ steps.extract_error.outputs.error_type }} in ${{ steps.extract_error.outputs.workflow_name }}`,
-              body: report,
-              labels: ['error', 'recovery-failed', 'automated']
-            });
-            
-            console.log(`Created issue #${issue.data.number}`);
+            try {
+              const issue = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `Error Recovery Failed: ${{ steps.extract_error.outputs.error_type }} in ${{ steps.extract_error.outputs.workflow_name }}`,
+                body: report,
+                labels: ['error', 'recovery-failed', 'automated']
+              });
+              
+              console.log(`Created issue #${issue.data.number}`);
+            } catch (error) {
+              console.log(`Could not create issue: ${error.message}`);
+              console.log('This might be due to permission issues with the GITHUB_TOKEN.');
+              console.log('Consider adding the following to your workflow:');
+              console.log('permissions:');
+              console.log('  actions: write');
+              console.log('  contents: read');
+              console.log('  issues: write');
+              
+              // Create a file with the error report instead
+              fs.writeFileSync('${ARTIFACTS_DIR}/error_report.md', report);
+              console.log('Error report saved to artifact: error_report.md');
+            }
       
       - name: Retry failed workflow if recovery was successful
         if: ${{ steps.recovery.outputs.recovery_success == 'true' && steps.determine_workflow.outputs.run_id != 'manual' && steps.determine_workflow.outputs.run_id != '' }}
