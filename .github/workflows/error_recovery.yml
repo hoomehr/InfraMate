@@ -85,6 +85,8 @@ jobs:
       
       - name: Find failed workflows
         id: find_failed
+        env:
+          GH_TOKEN: ${{ secrets.REPO_PAT }}
         run: |
           # For manual dispatch or workflow_run events, use the provided workflow ID
           if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ github.event.inputs.workflow_id }}" ]; then
@@ -121,6 +123,8 @@ jobs:
       
       - name: Get workflow details
         id: workflow_details
+        env:
+          GH_TOKEN: ${{ secrets.REPO_PAT }}
         run: |
           WORKFLOW_ID=${{ steps.find_failed.outputs.workflow_id }}
           WORKFLOW_DATA=$(gh api repos/${{ github.repository }}/actions/runs/$WORKFLOW_ID)
@@ -206,7 +210,7 @@ jobs:
         if: steps.recovery.outputs.recovery_success == 'true'
         uses: actions/github-script@v6
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.REPO_PAT }}
           script: |
             const fs = require('fs');
             const recoveryPlan = JSON.parse(fs.readFileSync('error_recovery/recovery_plan.json', 'utf8'));
@@ -234,7 +238,7 @@ jobs:
         if: steps.recovery.outputs.recovery_success == 'true'
         uses: actions/github-script@v6
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.REPO_PAT }}
           script: |
             const fs = require('fs');
             const recoveryPlan = JSON.parse(fs.readFileSync('error_recovery/recovery_plan.json', 'utf8'));
