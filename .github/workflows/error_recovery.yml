@@ -401,11 +401,10 @@ jobs:
           
           echo "Running error recovery flow..."
           
-          # Use the improved error recovery script - fix the syntax for conditional arguments
+          # Use the improved error recovery script with proper variable handling
+          AUTONOMOUS_ARG=""
           if [ "${AUTONOMOUS}" = "true" ]; then
             AUTONOMOUS_ARG="--autonomous"
-          else
-            AUTONOMOUS_ARG=""
           fi
           
           python scripts/error_recovery_script.py \
