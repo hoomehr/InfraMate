@@ -422,7 +422,14 @@ jobs:
         with:
           token: ${{ secrets.REPO_PAT }}
           event-type: agentic-error
-          client-payload: '{"workflow_id": "${{ github.run_id }}", "repo": "${{ github.repository }}", "run_number": "${{ github.run_number }}", "errors_file": "all_errors.json", "error_summary": "${{ steps.create.outputs.phase1_status == 'failure' && 'Creation' || '' }}${{ steps.optimize.outputs.phase2_status == 'failure' && ', Optimization' || '' }}${{ steps.secure.outputs.phase3_status == 'failure' && ', Security' || '' }}${{ steps.visualize.outputs.phase4_status == 'failure' && ', Visualization(optional)' || '' }}"}'
+          client-payload: >-
+            {
+              "workflow_id": "${{ github.run_id }}",
+              "repo": "${{ github.repository }}",
+              "run_number": "${{ github.run_number }}",
+              "errors_file": "all_errors.json",
+              "error_summary": "Failures detected in workflow"
+            }
       
       - name: Create Pull Request with Results
         if: always() && (steps.create.outputs.phase1_status == 'success')
