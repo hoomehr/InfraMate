@@ -235,95 +235,56 @@ jobs:
         continue-on-error: true
       
       #--------------------------------------------------------------
-      # Error Handling and Report Generation
+      # Error Handling and Report Generation (Super Simple)
       #--------------------------------------------------------------
-      - name: Generate Simplified Report
+      - name: Generate Basic Report
         id: report
         if: always()
         run: |
-          echo "# Inframate All-in-One Infrastructure Management Report" > ${ARTIFACTS_DIR}/full_report.md
-          echo "Generated at $(date)" >> ${ARTIFACTS_DIR}/full_report.md
-          echo "" >> ${ARTIFACTS_DIR}/full_report.md
-          
-          # Create basic error tracking file
+          # Create directories
+          mkdir -p ${ARTIFACTS_DIR}
+
+          # Create a very simple report file
+          cat > ${ARTIFACTS_DIR}/full_report.md << EOF
+          # Inframate Infrastructure Management Report
+          Generated at $(date)
+
+          ## Summary
+          - Creation: ${{ steps.create.outputs.phase1_status || 'Not Run' }}
+          - Optimization: ${{ steps.optimize.outputs.phase2_status || 'Not Run' }}
+          - Security: ${{ steps.secure.outputs.phase3_status || 'Not Run' }}
+          - Visualization: ${{ steps.visualize.outputs.phase4_status || 'Not Run' }} (Optional)
+          EOF
+
+          # Create minimal error file
           echo "[" > ${ARTIFACTS_DIR}/all_errors.json
           
-          # Track if any errors were found
-          ERRORS_FOUND=false
-          
-          # Phase 1: Creation
-          echo "## 1️⃣ Infrastructure Analysis and Creation" >> ${ARTIFACTS_DIR}/full_report.md
-          if [ "${{ steps.create.outputs.phase1_status }}" == "success" ]; then
-            echo "✅ **Status: Successful**" >> ${ARTIFACTS_DIR}/full_report.md
-          else
-            ERRORS_FOUND=true
-            echo "❌ **Status: Failed**" >> ${ARTIFACTS_DIR}/full_report.md
-            echo "- Error: ${{ steps.create.outputs.phase1_error_message || 'Unknown error' }}" >> ${ARTIFACTS_DIR}/full_report.md
-            
-            # Add to errors.json
-            echo "{\"phase\":\"creation\",\"error_message\":\"${{ steps.create.outputs.phase1_error_message || 'Unknown error' }}\",\"optional\":false}," >> ${ARTIFACTS_DIR}/all_errors.json
+          # Add basic error entries
+          if [ "${{ steps.create.outputs.phase1_status }}" == "failure" ]; then
+            echo "{\"phase\":\"creation\",\"error_message\":\"Creation failed\"}" >> ${ARTIFACTS_DIR}/all_errors.json
+            echo "," >> ${ARTIFACTS_DIR}/all_errors.json
           fi
-          echo "" >> ${ARTIFACTS_DIR}/full_report.md
           
-          # Phase 2: Optimization
-          echo "## 2️⃣ Infrastructure Optimization" >> ${ARTIFACTS_DIR}/full_report.md
-          if [ "${{ steps.optimize.outputs.phase2_status }}" == "success" ]; then
-            echo "✅ **Status: Successful**" >> ${ARTIFACTS_DIR}/full_report.md
-          else
-            ERRORS_FOUND=true
-            echo "❌ **Status: Failed**" >> ${ARTIFACTS_DIR}/full_report.md
-            echo "- Error: ${{ steps.optimize.outputs.phase2_error_message || 'Unknown error' }}" >> ${ARTIFACTS_DIR}/full_report.md
-            
-            # Add to errors.json
-            echo "{\"phase\":\"optimization\",\"error_message\":\"${{ steps.optimize.outputs.phase2_error_message || 'Unknown error' }}\",\"optional\":false}," >> ${ARTIFACTS_DIR}/all_errors.json
+          if [ "${{ steps.optimize.outputs.phase2_status }}" == "failure" ]; then
+            echo "{\"phase\":\"optimization\",\"error_message\":\"Optimization failed\"}" >> ${ARTIFACTS_DIR}/all_errors.json
+            echo "," >> ${ARTIFACTS_DIR}/all_errors.json
           fi
-          echo "" >> ${ARTIFACTS_DIR}/full_report.md
           
-          # Phase 3: Security
-          echo "## 3️⃣ Security Analysis and Hardening" >> ${ARTIFACTS_DIR}/full_report.md
-          if [ "${{ steps.secure.outputs.phase3_status }}" == "success" ]; then
-            echo "✅ **Status: Successful**" >> ${ARTIFACTS_DIR}/full_report.md
-          else
-            ERRORS_FOUND=true
-            echo "❌ **Status: Failed**" >> ${ARTIFACTS_DIR}/full_report.md
-            echo "- Error: ${{ steps.secure.outputs.phase3_error_message || 'Unknown error' }}" >> ${ARTIFACTS_DIR}/full_report.md
-            
-            # Add to errors.json
-            echo "{\"phase\":\"security\",\"error_message\":\"${{ steps.secure.outputs.phase3_error_message || 'Unknown error' }}\",\"optional\":false}," >> ${ARTIFACTS_DIR}/all_errors.json
+          if [ "${{ steps.secure.outputs.phase3_status }}" == "failure" ]; then
+            echo "{\"phase\":\"security\",\"error_message\":\"Security analysis failed\"}" >> ${ARTIFACTS_DIR}/all_errors.json
+            echo "," >> ${ARTIFACTS_DIR}/all_errors.json
           fi
-          echo "" >> ${ARTIFACTS_DIR}/full_report.md
           
-          # Phase 4: Visualization (Optional)
-          echo "## 4️⃣ Infrastructure Visualization (Optional)" >> ${ARTIFACTS_DIR}/full_report.md
-          if [ "${{ steps.visualize.outputs.phase4_status }}" == "success" ]; then
-            echo "✅ **Status: Successful**" >> ${ARTIFACTS_DIR}/full_report.md
-          else
-            echo "⚠️ **Status: Not Generated** (Optional Step)" >> ${ARTIFACTS_DIR}/full_report.md
-            echo "- Note: Visualization is optional and does not affect workflow success" >> ${ARTIFACTS_DIR}/full_report.md
-            
-            if [ "${{ steps.visualize.outputs.phase4_status }}" == "failure" ]; then
-              ERRORS_FOUND=true
-              # Add to errors.json (marked as optional)
-              echo "{\"phase\":\"visualization\",\"error_message\":\"${{ steps.visualize.outputs.phase4_error_message || 'Visualization failed' }}\",\"optional\":true}," >> ${ARTIFACTS_DIR}/all_errors.json
-            fi
+          if [ "${{ steps.visualize.outputs.phase4_status }}" == "failure" ]; then
+            echo "{\"phase\":\"visualization\",\"error_message\":\"Visualization failed\",\"optional\":true}" >> ${ARTIFACTS_DIR}/all_errors.json
+            echo "," >> ${ARTIFACTS_DIR}/all_errors.json
           fi
-          echo "" >> ${ARTIFACTS_DIR}/full_report.md
           
-          # Fix JSON array syntax
-          if [ "$ERRORS_FOUND" == "true" ]; then
-            # Remove trailing comma
-            sed -i '$ s/,$//' ${ARTIFACTS_DIR}/all_errors.json
-          fi
+          # Remove any trailing comma if present
+          sed -i 's/,$//' ${ARTIFACTS_DIR}/all_errors.json
           
           # Close the JSON array
           echo "]" >> ${ARTIFACTS_DIR}/all_errors.json
-          
-          # Add summary
-          echo "## Summary" >> ${ARTIFACTS_DIR}/full_report.md
-          echo "- Infrastructure Creation: ${{ steps.create.outputs.phase1_status || 'Not Run' }}" >> ${ARTIFACTS_DIR}/full_report.md
-          echo "- Infrastructure Optimization: ${{ steps.optimize.outputs.phase2_status || 'Not Run' }}" >> ${ARTIFACTS_DIR}/full_report.md
-          echo "- Security Analysis: ${{ steps.secure.outputs.phase3_status || 'Not Run' }}" >> ${ARTIFACTS_DIR}/full_report.md
-          echo "- Infrastructure Visualization: ${{ steps.visualize.outputs.phase4_status || 'Not Run' }} (Optional)" >> ${ARTIFACTS_DIR}/full_report.md
       
       - name: Create issue for errors
         if: always() && (steps.create.outputs.phase1_status == 'failure' || steps.optimize.outputs.phase2_status == 'failure' || steps.secure.outputs.phase3_status == 'failure')
