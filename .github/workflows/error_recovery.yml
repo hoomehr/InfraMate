@@ -401,12 +401,18 @@ jobs:
           
           echo "Running error recovery flow..."
           
-          # Use the improved error recovery script
+          # Use the improved error recovery script - fix the syntax for conditional arguments
+          if [ "${AUTONOMOUS}" = "true" ]; then
+            AUTONOMOUS_ARG="--autonomous"
+          else
+            AUTONOMOUS_ARG=""
+          fi
+          
           python scripts/error_recovery_script.py \
             --error-type "${ERROR_TYPE}" \
             --error-message "${ERROR_MESSAGE}" \
             --repo-path "${REPO_PATH}" \
-            $([[ "${AUTONOMOUS}" == "true" ]] && echo "--autonomous") \
+            ${AUTONOMOUS_ARG} \
             --workflow-name "${WORKFLOW_NAME}" \
             --run-id "${RUN_ID}" \
             --output-file "${ARTIFACTS_DIR}/recovery_report.json"
