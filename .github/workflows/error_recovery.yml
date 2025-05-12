@@ -47,7 +47,7 @@ on:
   
   # Automatically trigger when other workflows fail
   workflow_run:
-    types: [completed]
+    types: [failed]
     workflows: ["Create Infrastructure", "Infra Visualization", "Agentic Infrastructure Management"]
 
 jobs:
@@ -57,7 +57,7 @@ jobs:
     # Only run when the triggering workflow has failed or when manually triggered or on schedule
     if: |
       github.event_name == 'workflow_dispatch' || 
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure') || 
+      github.event_name == 'workflow_run' || 
       github.event_name == 'schedule'
     steps:
       - name: Checkout repository
