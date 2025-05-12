@@ -12,50 +12,37 @@ on:
   workflow_dispatch:
     inputs:
       workflow_id:
-        description: 'Workflow Run ID to recover (required)'
-        required: true
+        description: 'Workflow ID to analyze (optional)'
+        required: false
+      error_type:
+        description: 'Type of error (optional)'
+        required: false
+        default: 'auto_detect'
+      error_message:
+        description: 'Error message (optional)'
+        required: false
       repo_path:
-        description: 'Target repository path'
-        required: true
+        description: 'Repository path to analyze'
+        required: false
         default: '.'
       autonomous_mode:
-        description: 'Apply fixes automatically'
+        description: 'Run in autonomous mode'
         required: false
         type: boolean
         default: false
-      error_type:
-        description: 'Type of error (optional, will auto-detect if not specified)'
-        required: false
-        type: choice
-        options:
-          - auto_detect
-          - api_error
-          - terraform_error
-          - permission_error
-          - resource_error
-          - network_error
-          - validation_error
-          - system_error
-          - unknown_error
-        default: 'auto_detect'
-      error_message:
-        description: 'Error message (optional, will auto-detect if not specified)'
-        required: false
       artifact_name:
-        description: 'Name of error artifact (optional)'
+        description: 'Specific artifact to analyze (optional)'
         required: false
   
-  # Scheduled check for any failed workflows (runs every hour)
+  # Scheduled check for any failed workflows (runs every 6 hours)
   schedule:
-    - cron: '5 * * * *'  # Run 5 minutes past every hour
+    - cron: '0 */6 * * *'  # Run every 6 hours
   
   # Automatically trigger when other workflows fail
   workflow_run:
     workflows: ['*']  # Listen to all workflows
-    types:
-      - completed
-    branches:
-      - '**'  # All branches
+    types: [failure]
+    branches: ['**']  # All branches
 
 jobs:
   error-recovery:
@@ -64,7 +51,7 @@ jobs:
     if: |
       github.event_name == 'workflow_dispatch' || 
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure') || 
-      (github.event_name == 'schedule' && steps.find_failed.outputs.has_failed == 'true')
+      github.event_name == 'schedule'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -91,7 +78,7 @@ jobs:
       
       - name: Find failed workflow runs
         id: find_failed
-        if: ${{ github.event_name == 'schedule' }}
+        if: github.event_name == 'schedule'
         uses: actions/github-script@v6
         with:
           script: |
@@ -137,6 +124,12 @@ jobs:
               workflowName: latestRun.name,
               has_failed: 'true'
             };
+      
+      - name: Skip if no failed workflows found
+        if: github.event_name == 'schedule' && steps.find_failed.outputs.has_failed == 'false'
+        run: |
+          echo "No failed workflows found to analyze"
+          exit 0
       
       - name: Determine workflow run to analyze
         id: determine_workflow
