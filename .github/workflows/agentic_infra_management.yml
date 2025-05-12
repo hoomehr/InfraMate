@@ -237,7 +237,7 @@ jobs:
       #--------------------------------------------------------------
       # Error Handling and Report Generation
       #--------------------------------------------------------------
-      - name: Generate Comprehensive Report
+      - name: Generate Simplified Report
         id: report
         if: always()
         run: |
@@ -245,33 +245,71 @@ jobs:
           echo "Generated at $(date)" >> ${ARTIFACTS_DIR}/full_report.md
           echo "" >> ${ARTIFACTS_DIR}/full_report.md
           
-          # Collect all errors for error handler
+          # Create basic error tracking file
           echo "[" > ${ARTIFACTS_DIR}/all_errors.json
           
-          # Add phase errors if they exist
+          # Track if any errors were found
           ERRORS_FOUND=false
           
-          if [ "${{ steps.create.outputs.phase1_status }}" == "failure" ]; then
+          # Phase 1: Creation
+          echo "## 1️⃣ Infrastructure Analysis and Creation" >> ${ARTIFACTS_DIR}/full_report.md
+          if [ "${{ steps.create.outputs.phase1_status }}" == "success" ]; then
+            echo "✅ **Status: Successful**" >> ${ARTIFACTS_DIR}/full_report.md
+          else
             ERRORS_FOUND=true
-            echo "{\"phase\": \"creation\", \"error_type\": \"${{ steps.create.outputs.phase1_error_type }}\", \"error_message\": \"${{ steps.create.outputs.phase1_error_message }}\", \"timestamp\": \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\", \"optional\": false}," >> ${ARTIFACTS_DIR}/all_errors.json
+            echo "❌ **Status: Failed**" >> ${ARTIFACTS_DIR}/full_report.md
+            echo "- Error: ${{ steps.create.outputs.phase1_error_message || 'Unknown error' }}" >> ${ARTIFACTS_DIR}/full_report.md
+            
+            # Add to errors.json
+            echo "{\"phase\":\"creation\",\"error_message\":\"${{ steps.create.outputs.phase1_error_message || 'Unknown error' }}\",\"optional\":false}," >> ${ARTIFACTS_DIR}/all_errors.json
           fi
+          echo "" >> ${ARTIFACTS_DIR}/full_report.md
           
-          if [ "${{ steps.optimize.outputs.phase2_status }}" == "failure" ]; then
+          # Phase 2: Optimization
+          echo "## 2️⃣ Infrastructure Optimization" >> ${ARTIFACTS_DIR}/full_report.md
+          if [ "${{ steps.optimize.outputs.phase2_status }}" == "success" ]; then
+            echo "✅ **Status: Successful**" >> ${ARTIFACTS_DIR}/full_report.md
+          else
             ERRORS_FOUND=true
-            echo "{\"phase\": \"optimization\", \"error_type\": \"${{ steps.optimize.outputs.phase2_error_type }}\", \"error_message\": \"${{ steps.optimize.outputs.phase2_error_message }}\", \"timestamp\": \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\", \"optional\": false}," >> ${ARTIFACTS_DIR}/all_errors.json
+            echo "❌ **Status: Failed**" >> ${ARTIFACTS_DIR}/full_report.md
+            echo "- Error: ${{ steps.optimize.outputs.phase2_error_message || 'Unknown error' }}" >> ${ARTIFACTS_DIR}/full_report.md
+            
+            # Add to errors.json
+            echo "{\"phase\":\"optimization\",\"error_message\":\"${{ steps.optimize.outputs.phase2_error_message || 'Unknown error' }}\",\"optional\":false}," >> ${ARTIFACTS_DIR}/all_errors.json
           fi
+          echo "" >> ${ARTIFACTS_DIR}/full_report.md
           
-          if [ "${{ steps.secure.outputs.phase3_status }}" == "failure" ]; then
+          # Phase 3: Security
+          echo "## 3️⃣ Security Analysis and Hardening" >> ${ARTIFACTS_DIR}/full_report.md
+          if [ "${{ steps.secure.outputs.phase3_status }}" == "success" ]; then
+            echo "✅ **Status: Successful**" >> ${ARTIFACTS_DIR}/full_report.md
+          else
             ERRORS_FOUND=true
-            echo "{\"phase\": \"security\", \"error_type\": \"${{ steps.secure.outputs.phase3_error_type }}\", \"error_message\": \"${{ steps.secure.outputs.phase3_error_message }}\", \"timestamp\": \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\", \"optional\": false}," >> ${ARTIFACTS_DIR}/all_errors.json
+            echo "❌ **Status: Failed**" >> ${ARTIFACTS_DIR}/full_report.md
+            echo "- Error: ${{ steps.secure.outputs.phase3_error_message || 'Unknown error' }}" >> ${ARTIFACTS_DIR}/full_report.md
+            
+            # Add to errors.json
+            echo "{\"phase\":\"security\",\"error_message\":\"${{ steps.secure.outputs.phase3_error_message || 'Unknown error' }}\",\"optional\":false}," >> ${ARTIFACTS_DIR}/all_errors.json
           fi
+          echo "" >> ${ARTIFACTS_DIR}/full_report.md
           
-          if [ "${{ steps.visualize.outputs.phase4_status }}" == "failure" ]; then
-            ERRORS_FOUND=true
-            echo "{\"phase\": \"visualization\", \"error_type\": \"${{ steps.visualize.outputs.phase4_error_type }}\", \"error_message\": \"${{ steps.visualize.outputs.phase4_error_message }}\", \"timestamp\": \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\", \"optional\": true}," >> ${ARTIFACTS_DIR}/all_errors.json
+          # Phase 4: Visualization (Optional)
+          echo "## 4️⃣ Infrastructure Visualization (Optional)" >> ${ARTIFACTS_DIR}/full_report.md
+          if [ "${{ steps.visualize.outputs.phase4_status }}" == "success" ]; then
+            echo "✅ **Status: Successful**" >> ${ARTIFACTS_DIR}/full_report.md
+          else
+            echo "⚠️ **Status: Not Generated** (Optional Step)" >> ${ARTIFACTS_DIR}/full_report.md
+            echo "- Note: Visualization is optional and does not affect workflow success" >> ${ARTIFACTS_DIR}/full_report.md
+            
+            if [ "${{ steps.visualize.outputs.phase4_status }}" == "failure" ]; then
+              ERRORS_FOUND=true
+              # Add to errors.json (marked as optional)
+              echo "{\"phase\":\"visualization\",\"error_message\":\"${{ steps.visualize.outputs.phase4_error_message || 'Visualization failed' }}\",\"optional\":true}," >> ${ARTIFACTS_DIR}/all_errors.json
+            fi
           fi
+          echo "" >> ${ARTIFACTS_DIR}/full_report.md
           
-          # Fix JSON array syntax (remove trailing comma if any errors found)
+          # Fix JSON array syntax
           if [ "$ERRORS_FOUND" == "true" ]; then
             # Remove trailing comma
             sed -i '$ s/,$//' ${ARTIFACTS_DIR}/all_errors.json
@@ -280,108 +318,12 @@ jobs:
           # Close the JSON array
           echo "]" >> ${ARTIFACTS_DIR}/all_errors.json
           
-          # Generate Phase 1 (Create) Report Section
-          echo "## 1️⃣ Infrastructure Analysis and Creation" >> ${ARTIFACTS_DIR}/full_report.md
-          if [ "${{ steps.create.outputs.phase1_status }}" == "success" ]; then
-            echo "✅ **Status: Successful**" >> ${ARTIFACTS_DIR}/full_report.md
-            
-            # Extract infrastructure summary if available
-            if [ -f "${{ steps.create.outputs.phase1_output }}" ]; then
-              RESOURCES=$(jq -r '.infrastructure.resources | length // 0' "${{ steps.create.outputs.phase1_output }}" 2>/dev/null || echo "0")
-              echo "" >> ${ARTIFACTS_DIR}/full_report.md
-              echo "### Infrastructure Summary" >> ${ARTIFACTS_DIR}/full_report.md
-              echo "- Detected Resources: ${RESOURCES}" >> ${ARTIFACTS_DIR}/full_report.md
-              echo "" >> ${ARTIFACTS_DIR}/full_report.md
-              
-              # List resources if available
-              jq -r '.infrastructure.resources[] | "- **" + .type + "**: " + .name' "${{ steps.create.outputs.phase1_output }}" 2>/dev/null >> ${ARTIFACTS_DIR}/full_report.md
-            fi
-          else
-            echo "❌ **Status: Failed**" >> ${ARTIFACTS_DIR}/full_report.md
-            echo "- Error Type: ${{ steps.create.outputs.phase1_error_type }}" >> ${ARTIFACTS_DIR}/full_report.md
-            echo "- Error Message: ${{ steps.create.outputs.phase1_error_message }}" >> ${ARTIFACTS_DIR}/full_report.md
-          fi
-          echo "" >> ${ARTIFACTS_DIR}/full_report.md
-          
-          # Generate Phase 2 (Optimize) Report Section
-          echo "## 2️⃣ Infrastructure Optimization" >> ${ARTIFACTS_DIR}/full_report.md
-          if [ "${{ steps.optimize.outputs.phase2_status }}" == "success" ]; then
-            echo "✅ **Status: Successful**" >> ${ARTIFACTS_DIR}/full_report.md
-            
-            # Extract optimization summary if available
-            if [ -f "${{ steps.optimize.outputs.phase2_output }}" ]; then
-              OPTIMIZATIONS=$(jq -r '.optimizations | length // 0' "${{ steps.optimize.outputs.phase2_output }}" 2>/dev/null || echo "0")
-              COST_SAVINGS=$(jq -r '.cost_savings.percentage // "Unknown"' "${{ steps.optimize.outputs.phase2_output }}" 2>/dev/null || echo "Unknown")
-              
-              echo "" >> ${ARTIFACTS_DIR}/full_report.md
-              echo "### Optimization Summary" >> ${ARTIFACTS_DIR}/full_report.md
-              echo "- Optimizations Applied: ${OPTIMIZATIONS}" >> ${ARTIFACTS_DIR}/full_report.md
-              echo "- Estimated Cost Savings: ${COST_SAVINGS}%" >> ${ARTIFACTS_DIR}/full_report.md
-              echo "" >> ${ARTIFACTS_DIR}/full_report.md
-              
-              # List optimizations if available
-              jq -r '.optimizations[] | "- **" + .type + "**: " + .description' "${{ steps.optimize.outputs.phase2_output }}" 2>/dev/null >> ${ARTIFACTS_DIR}/full_report.md
-            fi
-          else
-            echo "❌ **Status: Failed**" >> ${ARTIFACTS_DIR}/full_report.md
-            echo "- Error Type: ${{ steps.optimize.outputs.phase2_error_type }}" >> ${ARTIFACTS_DIR}/full_report.md
-            echo "- Error Message: ${{ steps.optimize.outputs.phase2_error_message }}" >> ${ARTIFACTS_DIR}/full_report.md
-          fi
-          echo "" >> ${ARTIFACTS_DIR}/full_report.md
-          
-          # Generate Phase 3 (Security) Report Section
-          echo "## 3️⃣ Security Analysis and Hardening" >> ${ARTIFACTS_DIR}/full_report.md
-          if [ "${{ steps.secure.outputs.phase3_status }}" == "success" ]; then
-            echo "✅ **Status: Successful**" >> ${ARTIFACTS_DIR}/full_report.md
-            
-            # Extract security summary if available
-            if [ -f "${{ steps.secure.outputs.phase3_output }}" ]; then
-              VULNERABILITIES=$(jq -r '.security.vulnerabilities | length // 0' "${{ steps.secure.outputs.phase3_output }}" 2>/dev/null || echo "0")
-              FIXES=$(jq -r '.security.fixes | length // 0' "${{ steps.secure.outputs.phase3_output }}" 2>/dev/null || echo "0")
-              
-              echo "" >> ${ARTIFACTS_DIR}/full_report.md
-              echo "### Security Summary" >> ${ARTIFACTS_DIR}/full_report.md
-              echo "- Vulnerabilities Detected: ${VULNERABILITIES}" >> ${ARTIFACTS_DIR}/full_report.md
-              echo "- Security Fixes Applied: ${FIXES}" >> ${ARTIFACTS_DIR}/full_report.md
-              echo "" >> ${ARTIFACTS_DIR}/full_report.md
-              
-              # List vulnerabilities if available
-              jq -r '.security.vulnerabilities[] | "- **" + .severity + "**: " + .description' "${{ steps.secure.outputs.phase3_output }}" 2>/dev/null >> ${ARTIFACTS_DIR}/full_report.md
-            fi
-          else
-            echo "❌ **Status: Failed**" >> ${ARTIFACTS_DIR}/full_report.md
-            echo "- Error Type: ${{ steps.secure.outputs.phase3_error_type }}" >> ${ARTIFACTS_DIR}/full_report.md
-            echo "- Error Message: ${{ steps.secure.outputs.phase3_error_message }}" >> ${ARTIFACTS_DIR}/full_report.md
-          fi
-          echo "" >> ${ARTIFACTS_DIR}/full_report.md
-          
-          # Generate Phase 4 (Visualize) Report Section
-          echo "## 4️⃣ Infrastructure Visualization (Optional)" >> ${ARTIFACTS_DIR}/full_report.md
-          if [ "${{ steps.visualize.outputs.phase4_status }}" == "success" ]; then
-            echo "✅ **Status: Successful**" >> ${ARTIFACTS_DIR}/full_report.md
-            
-            # Extract visualization summary if available
-            if [ -f "${{ steps.visualize.outputs.phase4_output }}" ]; then
-              VISUALIZATIONS=$(jq -r '.visualizations | length // 0' "${{ steps.visualize.outputs.phase4_output }}" 2>/dev/null || echo "0")
-              
-              echo "" >> ${ARTIFACTS_DIR}/full_report.md
-              echo "### Visualization Summary" >> ${ARTIFACTS_DIR}/full_report.md
-              echo "- Visualizations Generated: ${VISUALIZATIONS}" >> ${ARTIFACTS_DIR}/full_report.md
-              echo "" >> ${ARTIFACTS_DIR}/full_report.md
-              
-              # Generate HTML report for visualizations
-              if [ -f "${{ steps.visualize.outputs.phase4_output }}" ]; then
-                python scripts/visualization/generate_report.py --input "${{ steps.visualize.outputs.phase4_output }}" --output "${ARTIFACTS_DIR}/inframate_visualization_report.html"
-                echo "A detailed HTML visualization report has been generated." >> ${ARTIFACTS_DIR}/full_report.md
-              fi
-            fi
-          else
-            echo "⚠️ **Status: Not Generated** (Optional Step)" >> ${ARTIFACTS_DIR}/full_report.md
-            echo "- Visualization is optional and was not successfully generated" >> ${ARTIFACTS_DIR}/full_report.md
-            if [ -n "${{ steps.visualize.outputs.phase4_error_message }}" ]; then
-              echo "- Note: ${{ steps.visualize.outputs.phase4_error_message }}" >> ${ARTIFACTS_DIR}/full_report.md
-            fi
-          fi
+          # Add summary
+          echo "## Summary" >> ${ARTIFACTS_DIR}/full_report.md
+          echo "- Infrastructure Creation: ${{ steps.create.outputs.phase1_status || 'Not Run' }}" >> ${ARTIFACTS_DIR}/full_report.md
+          echo "- Infrastructure Optimization: ${{ steps.optimize.outputs.phase2_status || 'Not Run' }}" >> ${ARTIFACTS_DIR}/full_report.md
+          echo "- Security Analysis: ${{ steps.secure.outputs.phase3_status || 'Not Run' }}" >> ${ARTIFACTS_DIR}/full_report.md
+          echo "- Infrastructure Visualization: ${{ steps.visualize.outputs.phase4_status || 'Not Run' }} (Optional)" >> ${ARTIFACTS_DIR}/full_report.md
       
       - name: Create issue for errors
         if: always() && (steps.create.outputs.phase1_status == 'failure' || steps.optimize.outputs.phase2_status == 'failure' || steps.secure.outputs.phase3_status == 'failure')
