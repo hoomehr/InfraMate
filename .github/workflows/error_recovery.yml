@@ -54,6 +54,8 @@ on:
     workflows: ['*']  # Listen to all workflows
     types:
       - completed
+    branches:
+      - '**'  # All branches
 
 jobs:
   error-recovery:
@@ -62,7 +64,7 @@ jobs:
     if: |
       github.event_name == 'workflow_dispatch' || 
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure') || 
-      github.event_name == 'schedule'
+      (github.event_name == 'schedule' && steps.find_failed.outputs.has_failed == 'true')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -106,7 +108,8 @@ jobs:
               return {
                 workflowId: null,
                 runId: null,
-                workflowName: null
+                workflowName: null,
+                has_failed: 'false'
               };
             }
             
@@ -120,7 +123,8 @@ jobs:
               return {
                 workflowId: null,
                 runId: null,
-                workflowName: null
+                workflowName: null,
+                has_failed: 'false'
               };
             }
             
@@ -130,7 +134,8 @@ jobs:
             return {
               workflowId: latestRun.workflow_id,
               runId: latestRun.id,
-              workflowName: latestRun.name
+              workflowName: latestRun.name,
+              has_failed: 'true'
             };
       
       - name: Determine workflow run to analyze
