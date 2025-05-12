@@ -129,6 +129,16 @@ jobs:
           
           echo "Visualization complete. Files available in visualizations directory."
 
+      - name: Clean up Terraform provider files
+        if: steps.find_tf.outputs.tf_found == 'true'
+        run: |
+          cd target_repo
+          # Remove .terraform directories and provider files
+          find . -type d -name ".terraform" -exec rm -rf {} +
+          find . -name "terraform-provider-*" -type f -delete
+          # Remove any other large files that might have been generated
+          find . -type f -size +100M -delete
+
       - name: Create Pull Request
         if: steps.find_tf.outputs.tf_found == 'true'
         uses: peter-evans/create-pull-request@v5

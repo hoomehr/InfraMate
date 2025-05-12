@@ -127,23 +127,98 @@ jobs:
           GH_TOKEN: ${{ secrets.REPO_PAT }}
         run: |
           WORKFLOW_ID=${{ steps.find_failed.outputs.workflow_id }}
-          WORKFLOW_DATA=$(gh api repos/${{ github.repository }}/actions/runs/$WORKFLOW_ID)
+          echo "Fetching details for workflow ID: $WORKFLOW_ID"
           
-          # Extract workflow name and conclusion
-          WORKFLOW_NAME=$(echo "$WORKFLOW_DATA" | jq -r '.name')
-          WORKFLOW_CONCLUSION=$(echo "$WORKFLOW_DATA" | jq -r '.conclusion')
+          # Verify repository name format
+          REPO="${{ github.repository }}"
+          echo "Repository: $REPO"
+          
+          # Get workflow info with error handling
+          HTTP_STATUS=$(curl -s -o workflow_data.json -w "%{http_code}" \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$REPO/actions/runs/$WORKFLOW_ID")
+          
+          # Check if API call was successful
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::error::Failed to fetch workflow data. HTTP Status: $HTTP_STATUS"
+            cat workflow_data.json
+            echo "workflow_name=Unknown" >> $GITHUB_OUTPUT
+            echo "workflow_conclusion=Unknown" >> $GITHUB_OUTPUT
+            echo "failed_job=Unknown" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Show full response for debugging
+          echo "API Response:"
+          cat workflow_data.json
+          
+          # Check if the response contains valid data
+          if ! jq -e '.' workflow_data.json > /dev/null 2>&1; then
+            echo "::error::Invalid JSON response from GitHub API"
+            echo "workflow_name=Unknown" >> $GITHUB_OUTPUT
+            echo "workflow_conclusion=Unknown" >> $GITHUB_OUTPUT
+            echo "failed_job=Unknown" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Extract workflow name and conclusion with safe fallbacks
+          WORKFLOW_NAME=$(jq -r '.name // "Unknown"' workflow_data.json)
+          WORKFLOW_CONCLUSION=$(jq -r '.conclusion // "Unknown"' workflow_data.json)
+          
+          echo "Workflow Name: $WORKFLOW_NAME"
+          echo "Workflow Conclusion: $WORKFLOW_CONCLUSION"
           
           echo "workflow_name=$WORKFLOW_NAME" >> $GITHUB_OUTPUT
           echo "workflow_conclusion=$WORKFLOW_CONCLUSION" >> $GITHUB_OUTPUT
           
-          # Get the failed job
-          FAILED_JOB=$(echo "$WORKFLOW_DATA" | jq -r '.jobs[] | select(.conclusion=="failure") | .name')
+          # Get jobs for this workflow run
+          HTTP_STATUS=$(curl -s -o workflow_jobs.json -w "%{http_code}" \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$REPO/actions/runs/$WORKFLOW_ID/jobs")
+          
+          # Check if jobs API call was successful
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::error::Failed to fetch job data. HTTP Status: $HTTP_STATUS"
+            cat workflow_jobs.json
+            echo "failed_job=Unknown" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Show jobs for debugging
+          echo "Jobs Response:"
+          cat workflow_jobs.json
+          
+          # Extract failed job with safe handling
+          if jq -e '.jobs' workflow_jobs.json > /dev/null 2>&1; then
+            FAILED_JOB=$(jq -r '.jobs[] | select(.conclusion=="failure") | .name' workflow_jobs.json | head -n1)
+            JOB_ID=$(jq -r '.jobs[] | select(.conclusion=="failure") | .id' workflow_jobs.json | head -n1)
+          elif jq -e '.[]' workflow_jobs.json > /dev/null 2>&1; then
+            FAILED_JOB=$(jq -r '.[] | select(.conclusion=="failure") | .name' workflow_jobs.json | head -n1)
+            JOB_ID=$(jq -r '.[] | select(.conclusion=="failure") | .id' workflow_jobs.json | head -n1)
+          else
+            FAILED_JOB="Unknown"
+            JOB_ID=""
+          fi
+          
+          if [ -z "$FAILED_JOB" ]; then
+            FAILED_JOB="Unknown"
+          fi
+          
+          echo "Failed Job: $FAILED_JOB"
           echo "failed_job=$FAILED_JOB" >> $GITHUB_OUTPUT
           
-          # Get error logs
-          JOB_ID=$(echo "$WORKFLOW_DATA" | jq -r '.jobs[] | select(.conclusion=="failure") | .id')
+          # Get error logs if job ID is available
           if [ -n "$JOB_ID" ]; then
-            gh api repos/${{ github.repository }}/actions/jobs/$JOB_ID/logs > error_logs.txt
+            echo "Fetching logs for job ID: $JOB_ID"
+            curl -s -H "Authorization: token $GH_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/$REPO/actions/jobs/$JOB_ID/logs" > error_logs.txt
+          else
+            echo "No failed jobs found or job ID not available."
+            echo "Creating empty error logs file."
+            echo "No error logs available. Could not determine the failed job." > error_logs.txt
           fi
       
       - name: Determine error type
@@ -180,8 +255,23 @@ jobs:
           # Create error recovery directory
           mkdir -p error_recovery
           
-          # Extract error outputs to variables to avoid substitution issues
-          ERROR_LOGS=$(cat error_logs.txt)
+          # Extract error logs safely with tail to avoid large file issues
+          if [ -f "error_logs.txt" ]; then
+            tail -n 1000 error_logs.txt > error_logs_excerpt.txt
+            ERROR_LOGS=$(cat error_logs_excerpt.txt)
+          else
+            ERROR_LOGS="No error logs available"
+          fi
+          
+          # Create a default recovery plan in case script fails
+          cat > error_recovery/recovery_plan.json << EOF
+          {
+            "error_type": "$ERROR_TYPE",
+            "root_cause": "Unable to analyze workflow with ID $WORKFLOW_ID. This could be due to insufficient permissions, invalid workflow ID, or the workflow run no longer exists.",
+            "solution": "Verify the workflow ID and ensure it exists. Check that the REPO_PAT token has sufficient permissions to access workflow details.",
+            "prevention": "Improve error handling and validation for workflow IDs in the error recovery workflow."
+          }
+          EOF
           
           # Initialize AUTONOMOUS_ARG
           AUTONOMOUS_ARG=""
@@ -189,21 +279,27 @@ jobs:
             AUTONOMOUS_ARG="--autonomous"
           fi
           
-          # Run the error recovery script
-          python scripts/error_recovery.py \
-            --error-type "$ERROR_TYPE" \
-            --workflow-id "$WORKFLOW_ID" \
-            --workflow-name "$WORKFLOW_NAME" \
-            --failed-job "$FAILED_JOB" \
-            --error-logs "$ERROR_LOGS" \
-            --output error_recovery/recovery_plan.json \
-            $AUTONOMOUS_ARG
-          
-          # Set outputs based on exit code
-          if [ $? -eq 0 ]; then
-            echo "recovery_success=true" >> $GITHUB_OUTPUT
+          # Check if error recovery script exists
+          if [ -f "scripts/error_recovery.py" ]; then
+            # Run the error recovery script
+            python scripts/error_recovery.py \
+              --error-type "$ERROR_TYPE" \
+              --workflow-id "$WORKFLOW_ID" \
+              --workflow-name "$WORKFLOW_NAME" \
+              --failed-job "$FAILED_JOB" \
+              --error-logs "$ERROR_LOGS" \
+              --output error_recovery/recovery_plan.json \
+              $AUTONOMOUS_ARG
+            
+            # Set outputs based on exit code
+            if [ $? -eq 0 ]; then
+              echo "recovery_success=true" >> $GITHUB_OUTPUT
+            else
+              echo "recovery_success=false" >> $GITHUB_OUTPUT
+            fi
           else
-            echo "recovery_success=false" >> $GITHUB_OUTPUT
+            echo "::warning::Error recovery script not found at scripts/error_recovery.py"
+            echo "recovery_success=true" >> $GITHUB_OUTPUT
           fi
       
       - name: Create recovery issue
@@ -213,59 +309,102 @@ jobs:
           github-token: ${{ secrets.REPO_PAT }}
           script: |
             const fs = require('fs');
-            const recoveryPlan = JSON.parse(fs.readFileSync('error_recovery/recovery_plan.json', 'utf8'));
+            let recoveryPlan;
             
-            const issue = await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `Error Recovery Plan: ${context.payload.workflow_run?.name || 'Unknown Workflow'}`,
-              body: `## Error Recovery Plan\n\n` +
-                    `### Error Type\n${recoveryPlan.error_type}\n\n` +
-                    `### Root Cause\n${recoveryPlan.root_cause}\n\n` +
-                    `### Solution\n${recoveryPlan.solution}\n\n` +
-                    `### Prevention\n${recoveryPlan.prevention}\n\n` +
-                    `### Additional Context\n` +
-                    `- Workflow: ${context.payload.workflow_run?.name || 'Unknown'}\n` +
-                    `- Failed Job: ${context.payload.workflow_run?.jobs?.[0]?.name || 'Unknown'}\n` +
-                    `- Error Time: ${new Date().toISOString()}\n\n` +
-                    `This issue was automatically created by the error recovery system.`,
-              labels: ['error-recovery', 'automated']
-            });
+            try {
+              recoveryPlan = JSON.parse(fs.readFileSync('error_recovery/recovery_plan.json', 'utf8'));
+            } catch (error) {
+              console.log(`Error reading recovery plan: ${error.message}`);
+              recoveryPlan = {
+                error_type: "unknown",
+                root_cause: "Failed to read recovery plan file",
+                solution: "Check workflow logs for details",
+                prevention: "Improve error handling in recovery workflow"
+              };
+            }
             
-            console.log(`Created recovery issue #${issue.data.number}`);
+            try {
+              const issue = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `Error Recovery Plan: ${context.payload.workflow_run?.name || 'Unknown Workflow'}`,
+                body: `## Error Recovery Plan\n\n` +
+                      `### Error Type\n${recoveryPlan.error_type}\n\n` +
+                      `### Root Cause\n${recoveryPlan.root_cause}\n\n` +
+                      `### Solution\n${recoveryPlan.solution}\n\n` +
+                      `### Prevention\n${recoveryPlan.prevention}\n\n` +
+                      `### Additional Context\n` +
+                      `- Workflow: ${context.payload.workflow_run?.name || 'Unknown'}\n` +
+                      `- Failed Job: ${context.payload.workflow_run?.jobs?.[0]?.name || 'Unknown'}\n` +
+                      `- Error Time: ${new Date().toISOString()}\n\n` +
+                      `This issue was automatically created by the error recovery system.`,
+                labels: ['error-recovery', 'automated']
+              });
+              
+              console.log(`Created recovery issue #${issue.data.number}`);
+            } catch (error) {
+              console.log(`Error creating issue: ${error.message}`);
+            }
       
       - name: Comment on PR
         if: steps.recovery.outputs.recovery_success == 'true'
         uses: actions/github-script@v6
+        continue-on-error: true
         with:
           github-token: ${{ secrets.REPO_PAT }}
           script: |
             const fs = require('fs');
-            const recoveryPlan = JSON.parse(fs.readFileSync('error_recovery/recovery_plan.json', 'utf8'));
+            let recoveryPlan;
             
-            // Find the PR associated with the workflow
-            const workflowId = '${{ steps.find_failed.outputs.workflow_id }}';
-            const workflow = await github.rest.actions.getWorkflowRun({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: workflowId
-            });
+            try {
+              recoveryPlan = JSON.parse(fs.readFileSync('error_recovery/recovery_plan.json', 'utf8'));
+            } catch (error) {
+              console.log(`Error reading recovery plan: ${error.message}`);
+              recoveryPlan = {
+                error_type: "unknown",
+                root_cause: "Failed to read recovery plan file",
+                solution: "Check workflow logs for details",
+                prevention: "Improve error handling in recovery workflow"
+              };
+            }
             
-            // Extract PR number from workflow
-            const prMatch = workflow.data.head_commit.message.match(/\(#(\d+)\)/);
-            if (prMatch) {
-              const prNumber = prMatch[1];
-              await github.rest.issues.createComment({
+            try {
+              // Find the PR associated with the workflow
+              const workflowId = '${{ steps.find_failed.outputs.workflow_id }}';
+              console.log(`Looking for PR associated with workflow ID: ${workflowId}`);
+              
+              const workflow = await github.rest.actions.getWorkflowRun({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: prNumber,
-                body: `## 🛠️ Error Recovery Plan\n\n` +
-                      `An error was detected and a recovery plan has been created.\n\n` +
-                      `### Error Type\n${recoveryPlan.error_type}\n\n` +
-                      `### Solution\n${recoveryPlan.solution}\n\n` +
-                      `### Prevention\n${recoveryPlan.prevention}\n\n` +
-                      `A detailed issue has been created with more information.`
+                run_id: workflowId
               });
+              
+              console.log(`Found workflow run. Commit message: ${workflow.data.head_commit?.message || 'Unknown'}`);
+              
+              // Extract PR number from workflow
+              const prMatch = workflow.data.head_commit?.message?.match(/\(#(\d+)\)/);
+              if (prMatch) {
+                const prNumber = prMatch[1];
+                console.log(`Found PR number: ${prNumber}`);
+                
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  body: `## 🛠️ Error Recovery Plan\n\n` +
+                        `An error was detected and a recovery plan has been created.\n\n` +
+                        `### Error Type\n${recoveryPlan.error_type}\n\n` +
+                        `### Solution\n${recoveryPlan.solution}\n\n` +
+                        `### Prevention\n${recoveryPlan.prevention}\n\n` +
+                        `A detailed issue has been created with more information.`
+                });
+                
+                console.log(`Added comment to PR #${prNumber}`);
+              } else {
+                console.log(`No PR number found in commit message`);
+              }
+            } catch (error) {
+              console.log(`Error handling PR comment: ${error.message}`);
             }
       
       - name: Upload recovery artifacts
