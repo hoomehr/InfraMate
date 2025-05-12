@@ -1,4 +1,4 @@
-name: Agentic Infrastructure Management
+name: Inframate - All-in-One Infrastructure Management
 
 on:
   push:
@@ -11,48 +11,31 @@ on:
   workflow_dispatch:
     inputs:
       target_repo:
-        description: 'Target repository to analyze'
+        description: 'Target repository to analyze and manage'
         required: true
         default: '.'
       target_branch:
         description: 'Branch to analyze'
         required: true
         default: 'main'
-      action:
-        description: 'Action to perform (analyze, optimize, secure, visualize, auto)'
-        required: true
-        default: 'analyze'
-      autonomous_mode:
-        description: 'Run in fully autonomous mode'
-        required: true
-        default: 'false'
-        type: boolean
-      error_mode:
-        description: 'Error handling mode (auto, verbose, silent)'
-        required: true
-        default: 'auto'
-        type: choice
-        options:
-          - auto
-          - verbose
-          - silent
 
 jobs:
-  agentic-infra-management:
+  inframate-all-in-one:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
       
       - name: Checkout target repository
         if: ${{ github.event.inputs.target_repo != '.' }}
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           repository: ${{ github.event.inputs.target_repo }}
           ref: ${{ github.event.inputs.target_branch }}
           path: target_repo
+          token: ${{ secrets.REPO_PAT }}
           
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -64,9 +47,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install google-generativeai
+          pip install terraform-local
 
-      - name: Set up error capture
-        id: setup_error_capture
+      - name: Set up environment
+        id: setup
         run: |
           mkdir -p artifacts
           echo "ARTIFACTS_DIR=$(pwd)/artifacts" >> $GITHUB_ENV
@@ -76,162 +60,357 @@ jobs:
           
           # Timestamp for the run
           echo "RUN_TIMESTAMP=$(date +%Y%m%d_%H%M%S)" >> $GITHUB_ENV
+          
+          # Determine the target repository path
+          if [ "${{ github.event.inputs.target_repo }}" == "." ]; then
+            echo "TARGET_REPO_PATH=$(pwd)" >> $GITHUB_ENV
+          else
+            echo "TARGET_REPO_PATH=$(pwd)/target_repo" >> $GITHUB_ENV
+          fi
       
-      - name: Run agentic workflow with error handling
-        id: run_workflow
+      #--------------------------------------------------------------
+      # PHASE 1: Infrastructure Analysis and Creation
+      #--------------------------------------------------------------
+      - name: 1️⃣ Analyze and Create Infrastructure
+        id: create
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          # Determine the target repository path
-          if [ "${{ github.event.inputs.target_repo }}" == "." ]; then
-            TARGET_REPO_PATH="$(pwd)"
+          echo "## Phase 1: Infrastructure Analysis and Creation"
+          echo "Starting repository analysis..."
+          
+          OUTPUT_FILE="${ARTIFACTS_DIR}/phase1_results_${RUN_TIMESTAMP}.json"
+          
+          ./scripts/run_agentic_workflow.sh \
+            --repo-path "${TARGET_REPO_PATH}" \
+            --action analyze \
+            --autonomous \
+            --output "${OUTPUT_FILE}" \
+            --error-mode auto
+          
+          EXIT_CODE=$?
+          echo "phase1_exit_code=${EXIT_CODE}" >> $GITHUB_OUTPUT
+          echo "phase1_output=${OUTPUT_FILE}" >> $GITHUB_OUTPUT
+          
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "phase1_status=success" >> $GITHUB_OUTPUT
+            echo "✅ Phase 1 completed successfully"
           else
-            TARGET_REPO_PATH="$(pwd)/target_repo"
-          fi
-          
-          # Determine the action
-          ACTION="${{ github.event.inputs.action || 'analyze' }}"
-          
-          # Determine if autonomous mode
-          if [ "${{ github.event.inputs.autonomous_mode }}" == "true" ]; then
-            AUTONOMOUS_FLAG="--autonomous"
-          else
-            AUTONOMOUS_FLAG=""
-          fi
-          
-          # Determine error mode
-          ERROR_MODE="${{ github.event.inputs.error_mode || 'auto' }}"
-          
-          # Set output file
-          OUTPUT_FILE="${ARTIFACTS_DIR}/results_${RUN_TIMESTAMP}.json"
-          
-          # Run the workflow with error handling
-          COMMAND="./scripts/run_agentic_workflow.sh --repo-path \"${TARGET_REPO_PATH}\" --action ${ACTION} ${AUTONOMOUS_FLAG} --output \"${OUTPUT_FILE}\" --error-mode ${ERROR_MODE}"
-          echo "Running command: ${COMMAND}"
-          
-          # Execute and capture output
-          ${COMMAND} 2>&1 | tee ${ARTIFACTS_DIR}/workflow_output.log
-          
-          # Capture the exit code
-          EXIT_CODE=${PIPESTATUS[0]}
-          echo "workflow_exit_code=${EXIT_CODE}" >> $GITHUB_OUTPUT
-          
-          # Check if the output file was created
-          if [ -f "${OUTPUT_FILE}" ]; then
-            echo "output_file=${OUTPUT_FILE}" >> $GITHUB_OUTPUT
+            echo "phase1_status=failure" >> $GITHUB_OUTPUT
+            echo "❌ Phase 1 failed with exit code: ${EXIT_CODE}"
             
-            # Check for errors in the output
-            if grep -q "\"success\": false" "${OUTPUT_FILE}"; then
-              echo "has_errors=true" >> $GITHUB_OUTPUT
-              
-              # Extract error details for creating an issue
-              ERROR_TYPE=$(jq -r '.error.type // "unknown"' "${OUTPUT_FILE}")
-              ERROR_MSG=$(jq -r '.error.message // "Unknown error"' "${OUTPUT_FILE}")
-              
-              echo "error_type=${ERROR_TYPE}" >> $GITHUB_OUTPUT
-              echo "error_message=${ERROR_MSG}" >> $GITHUB_OUTPUT
-            else
-              echo "has_errors=false" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "has_errors=true" >> $GITHUB_OUTPUT
-            echo "error_type=execution_failure" >> $GITHUB_OUTPUT
-            echo "error_message=Workflow failed to produce output file" >> $GITHUB_OUTPUT
+            # Extract error information for error report
+            ERROR_TYPE=$(jq -r '.error.type // "unknown"' "${OUTPUT_FILE}" 2>/dev/null || echo "unknown")
+            ERROR_MSG=$(jq -r '.error.message // "Unknown error occurred during infrastructure analysis"' "${OUTPUT_FILE}" 2>/dev/null || echo "Unknown error occurred during infrastructure analysis")
+            
+            echo "phase1_error_type=${ERROR_TYPE}" >> $GITHUB_OUTPUT
+            echo "phase1_error_message=${ERROR_MSG}" >> $GITHUB_OUTPUT
           fi
-          
-          exit ${EXIT_CODE}
         continue-on-error: true
       
-      - name: Generate error report
-        if: steps.run_workflow.outputs.has_errors == 'true'
+      #--------------------------------------------------------------
+      # PHASE 2: Infrastructure Optimization
+      #--------------------------------------------------------------
+      - name: 2️⃣ Optimize Infrastructure (Cost & Performance)
+        id: optimize
+        if: always() && (steps.create.outputs.phase1_status == 'success')
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          echo "## Inframate Workflow Error" > ${ARTIFACTS_DIR}/error_report.md
-          echo "" >> ${ARTIFACTS_DIR}/error_report.md
-          echo "### Error Details" >> ${ARTIFACTS_DIR}/error_report.md
-          echo "- **Type:** ${{ steps.run_workflow.outputs.error_type }}" >> ${ARTIFACTS_DIR}/error_report.md
-          echo "- **Message:** ${{ steps.run_workflow.outputs.error_message }}" >> ${ARTIFACTS_DIR}/error_report.md
-          echo "" >> ${ARTIFACTS_DIR}/error_report.md
+          echo "## Phase 2: Infrastructure Optimization"
+          echo "Optimizing infrastructure for cost and performance..."
           
-          # Extract AI solution if available
-          if [ -f "${{ steps.run_workflow.outputs.output_file }}" ]; then
-            echo "### AI Solution" >> ${ARTIFACTS_DIR}/error_report.md
-            echo "" >> ${ARTIFACTS_DIR}/error_report.md
-            
-            # Extract root cause
-            ROOT_CAUSE=$(jq -r '.error.ai_solution.root_cause // "Unknown"' "${{ steps.run_workflow.outputs.output_file }}")
-            echo "#### Root Cause" >> ${ARTIFACTS_DIR}/error_report.md
-            echo "${ROOT_CAUSE}" >> ${ARTIFACTS_DIR}/error_report.md
-            echo "" >> ${ARTIFACTS_DIR}/error_report.md
-            
-            # Extract solution
-            SOLUTION=$(jq -r '.error.ai_solution.solution // "No solution available"' "${{ steps.run_workflow.outputs.output_file }}")
-            echo "#### Solution" >> ${ARTIFACTS_DIR}/error_report.md
-            echo "${SOLUTION}" >> ${ARTIFACTS_DIR}/error_report.md
-            echo "" >> ${ARTIFACTS_DIR}/error_report.md
-            
-            # Extract prevention
-            PREVENTION=$(jq -r '.error.ai_solution.prevention // "No prevention tips available"' "${{ steps.run_workflow.outputs.output_file }}")
-            echo "#### Prevention" >> ${ARTIFACTS_DIR}/error_report.md
-            echo "${PREVENTION}" >> ${ARTIFACTS_DIR}/error_report.md
+          OUTPUT_FILE="${ARTIFACTS_DIR}/phase2_results_${RUN_TIMESTAMP}.json"
+          
+          ./scripts/run_agentic_workflow.sh \
+            --repo-path "${TARGET_REPO_PATH}" \
+            --action optimize \
+            --autonomous \
+            --output "${OUTPUT_FILE}" \
+            --error-mode auto
+          
+          EXIT_CODE=$?
+          echo "phase2_exit_code=${EXIT_CODE}" >> $GITHUB_OUTPUT
+          echo "phase2_output=${OUTPUT_FILE}" >> $GITHUB_OUTPUT
+          
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "phase2_status=success" >> $GITHUB_OUTPUT
+            echo "✅ Phase 2 completed successfully"
           else
-            echo "No AI solution available." >> ${ARTIFACTS_DIR}/error_report.md
-          fi
-          
-          # Add error recovery history if available
-          if [ -f "${{ steps.run_workflow.outputs.output_file }}" ]; then
-            RECOVERY_ATTEMPTS=$(jq -r '.error.recovery_attempts | length // 0' "${{ steps.run_workflow.outputs.output_file }}")
+            echo "phase2_status=failure" >> $GITHUB_OUTPUT
+            echo "❌ Phase 2 failed with exit code: ${EXIT_CODE}"
             
-            if [ "${RECOVERY_ATTEMPTS}" != "0" ] && [ "${RECOVERY_ATTEMPTS}" != "null" ]; then
-              echo "### Recovery Attempts" >> ${ARTIFACTS_DIR}/error_report.md
-              echo "" >> ${ARTIFACTS_DIR}/error_report.md
-              echo "The system made ${RECOVERY_ATTEMPTS} recovery attempts:" >> ${ARTIFACTS_DIR}/error_report.md
-              echo "" >> ${ARTIFACTS_DIR}/error_report.md
+            # Extract error information for error report
+            ERROR_TYPE=$(jq -r '.error.type // "unknown"' "${OUTPUT_FILE}" 2>/dev/null || echo "unknown")
+            ERROR_MSG=$(jq -r '.error.message // "Unknown error occurred during infrastructure optimization"' "${OUTPUT_FILE}" 2>/dev/null || echo "Unknown error occurred during infrastructure optimization")
+            
+            echo "phase2_error_type=${ERROR_TYPE}" >> $GITHUB_OUTPUT
+            echo "phase2_error_message=${ERROR_MSG}" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
+      
+      #--------------------------------------------------------------
+      # PHASE 3: Security Analysis
+      #--------------------------------------------------------------
+      - name: 3️⃣ Security Analysis and Hardening
+        id: secure
+        if: always() && (steps.create.outputs.phase1_status == 'success')
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          echo "## Phase 3: Security Analysis and Hardening"
+          echo "Analyzing infrastructure for security vulnerabilities..."
+          
+          OUTPUT_FILE="${ARTIFACTS_DIR}/phase3_results_${RUN_TIMESTAMP}.json"
+          
+          ./scripts/run_agentic_workflow.sh \
+            --repo-path "${TARGET_REPO_PATH}" \
+            --action secure \
+            --autonomous \
+            --output "${OUTPUT_FILE}" \
+            --error-mode auto
+          
+          EXIT_CODE=$?
+          echo "phase3_exit_code=${EXIT_CODE}" >> $GITHUB_OUTPUT
+          echo "phase3_output=${OUTPUT_FILE}" >> $GITHUB_OUTPUT
+          
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "phase3_status=success" >> $GITHUB_OUTPUT
+            echo "✅ Phase 3 completed successfully"
+          else
+            echo "phase3_status=failure" >> $GITHUB_OUTPUT
+            echo "❌ Phase 3 failed with exit code: ${EXIT_CODE}"
+            
+            # Extract error information for error report
+            ERROR_TYPE=$(jq -r '.error.type // "unknown"' "${OUTPUT_FILE}" 2>/dev/null || echo "unknown")
+            ERROR_MSG=$(jq -r '.error.message // "Unknown error occurred during security analysis"' "${OUTPUT_FILE}" 2>/dev/null || echo "Unknown error occurred during security analysis")
+            
+            echo "phase3_error_type=${ERROR_TYPE}" >> $GITHUB_OUTPUT
+            echo "phase3_error_message=${ERROR_MSG}" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
+      
+      #--------------------------------------------------------------
+      # PHASE 4: Infrastructure Visualization
+      #--------------------------------------------------------------
+      - name: 4️⃣ Infrastructure Visualization
+        id: visualize
+        if: always() && (steps.create.outputs.phase1_status == 'success')
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          echo "## Phase 4: Infrastructure Visualization"
+          echo "Generating infrastructure visualizations..."
+          
+          OUTPUT_FILE="${ARTIFACTS_DIR}/phase4_results_${RUN_TIMESTAMP}.json"
+          
+          ./scripts/run_agentic_workflow.sh \
+            --repo-path "${TARGET_REPO_PATH}" \
+            --action visualize \
+            --autonomous \
+            --output "${OUTPUT_FILE}" \
+            --error-mode auto
+          
+          EXIT_CODE=$?
+          echo "phase4_exit_code=${EXIT_CODE}" >> $GITHUB_OUTPUT
+          echo "phase4_output=${OUTPUT_FILE}" >> $GITHUB_OUTPUT
+          
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "phase4_status=success" >> $GITHUB_OUTPUT
+            echo "✅ Phase 4 completed successfully"
+          else
+            echo "phase4_status=failure" >> $GITHUB_OUTPUT
+            echo "❌ Phase 4 failed with exit code: ${EXIT_CODE}"
+            
+            # Extract error information for error report
+            ERROR_TYPE=$(jq -r '.error.type // "unknown"' "${OUTPUT_FILE}" 2>/dev/null || echo "unknown")
+            ERROR_MSG=$(jq -r '.error.message // "Unknown error occurred during visualization"' "${OUTPUT_FILE}" 2>/dev/null || echo "Unknown error occurred during visualization")
+            
+            echo "phase4_error_type=${ERROR_TYPE}" >> $GITHUB_OUTPUT
+            echo "phase4_error_message=${ERROR_MSG}" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
+      
+      #--------------------------------------------------------------
+      # Error Handling and Report Generation
+      #--------------------------------------------------------------
+      - name: Generate Comprehensive Report
+        id: report
+        if: always()
+        run: |
+          echo "# Inframate All-in-One Infrastructure Management Report" > ${ARTIFACTS_DIR}/full_report.md
+          echo "Generated at $(date)" >> ${ARTIFACTS_DIR}/full_report.md
+          echo "" >> ${ARTIFACTS_DIR}/full_report.md
+          
+          # Generate Phase 1 (Create) Report Section
+          echo "## 1️⃣ Infrastructure Analysis and Creation" >> ${ARTIFACTS_DIR}/full_report.md
+          if [ "${{ steps.create.outputs.phase1_status }}" == "success" ]; then
+            echo "✅ **Status: Successful**" >> ${ARTIFACTS_DIR}/full_report.md
+            
+            # Extract infrastructure summary if available
+            if [ -f "${{ steps.create.outputs.phase1_output }}" ]; then
+              RESOURCES=$(jq -r '.infrastructure.resources | length // 0' "${{ steps.create.outputs.phase1_output }}" 2>/dev/null || echo "0")
+              echo "" >> ${ARTIFACTS_DIR}/full_report.md
+              echo "### Infrastructure Summary" >> ${ARTIFACTS_DIR}/full_report.md
+              echo "- Detected Resources: ${RESOURCES}" >> ${ARTIFACTS_DIR}/full_report.md
+              echo "" >> ${ARTIFACTS_DIR}/full_report.md
               
-              jq -r '.error.recovery_attempts[] | "- **Attempt:** \(.timestamp)\n  - **Success:** \(.success)\n  - **Duration:** \(.duration) seconds\n"' "${{ steps.run_workflow.outputs.output_file }}" >> ${ARTIFACTS_DIR}/error_report.md
+              # List resources if available
+              jq -r '.infrastructure.resources[] | "- **" + .type + "**: " + .name' "${{ steps.create.outputs.phase1_output }}" 2>/dev/null >> ${ARTIFACTS_DIR}/full_report.md
             fi
+          else
+            echo "❌ **Status: Failed**" >> ${ARTIFACTS_DIR}/full_report.md
+            echo "- Error Type: ${{ steps.create.outputs.phase1_error_type }}" >> ${ARTIFACTS_DIR}/full_report.md
+            echo "- Error Message: ${{ steps.create.outputs.phase1_error_message }}" >> ${ARTIFACTS_DIR}/full_report.md
+          fi
+          echo "" >> ${ARTIFACTS_DIR}/full_report.md
+          
+          # Generate Phase 2 (Optimize) Report Section
+          echo "## 2️⃣ Infrastructure Optimization" >> ${ARTIFACTS_DIR}/full_report.md
+          if [ "${{ steps.optimize.outputs.phase2_status }}" == "success" ]; then
+            echo "✅ **Status: Successful**" >> ${ARTIFACTS_DIR}/full_report.md
+            
+            # Extract optimization summary if available
+            if [ -f "${{ steps.optimize.outputs.phase2_output }}" ]; then
+              OPTIMIZATIONS=$(jq -r '.optimizations | length // 0' "${{ steps.optimize.outputs.phase2_output }}" 2>/dev/null || echo "0")
+              COST_SAVINGS=$(jq -r '.cost_savings.percentage // "Unknown"' "${{ steps.optimize.outputs.phase2_output }}" 2>/dev/null || echo "Unknown")
+              
+              echo "" >> ${ARTIFACTS_DIR}/full_report.md
+              echo "### Optimization Summary" >> ${ARTIFACTS_DIR}/full_report.md
+              echo "- Optimizations Applied: ${OPTIMIZATIONS}" >> ${ARTIFACTS_DIR}/full_report.md
+              echo "- Estimated Cost Savings: ${COST_SAVINGS}%" >> ${ARTIFACTS_DIR}/full_report.md
+              echo "" >> ${ARTIFACTS_DIR}/full_report.md
+              
+              # List optimizations if available
+              jq -r '.optimizations[] | "- **" + .type + "**: " + .description' "${{ steps.optimize.outputs.phase2_output }}" 2>/dev/null >> ${ARTIFACTS_DIR}/full_report.md
+            fi
+          else
+            echo "❌ **Status: Failed**" >> ${ARTIFACTS_DIR}/full_report.md
+            echo "- Error Type: ${{ steps.optimize.outputs.phase2_error_type }}" >> ${ARTIFACTS_DIR}/full_report.md
+            echo "- Error Message: ${{ steps.optimize.outputs.phase2_error_message }}" >> ${ARTIFACTS_DIR}/full_report.md
+          fi
+          echo "" >> ${ARTIFACTS_DIR}/full_report.md
+          
+          # Generate Phase 3 (Security) Report Section
+          echo "## 3️⃣ Security Analysis and Hardening" >> ${ARTIFACTS_DIR}/full_report.md
+          if [ "${{ steps.secure.outputs.phase3_status }}" == "success" ]; then
+            echo "✅ **Status: Successful**" >> ${ARTIFACTS_DIR}/full_report.md
+            
+            # Extract security summary if available
+            if [ -f "${{ steps.secure.outputs.phase3_output }}" ]; then
+              VULNERABILITIES=$(jq -r '.security.vulnerabilities | length // 0' "${{ steps.secure.outputs.phase3_output }}" 2>/dev/null || echo "0")
+              FIXES=$(jq -r '.security.fixes | length // 0' "${{ steps.secure.outputs.phase3_output }}" 2>/dev/null || echo "0")
+              
+              echo "" >> ${ARTIFACTS_DIR}/full_report.md
+              echo "### Security Summary" >> ${ARTIFACTS_DIR}/full_report.md
+              echo "- Vulnerabilities Detected: ${VULNERABILITIES}" >> ${ARTIFACTS_DIR}/full_report.md
+              echo "- Security Fixes Applied: ${FIXES}" >> ${ARTIFACTS_DIR}/full_report.md
+              echo "" >> ${ARTIFACTS_DIR}/full_report.md
+              
+              # List vulnerabilities if available
+              jq -r '.security.vulnerabilities[] | "- **" + .severity + "**: " + .description' "${{ steps.secure.outputs.phase3_output }}" 2>/dev/null >> ${ARTIFACTS_DIR}/full_report.md
+            fi
+          else
+            echo "❌ **Status: Failed**" >> ${ARTIFACTS_DIR}/full_report.md
+            echo "- Error Type: ${{ steps.secure.outputs.phase3_error_type }}" >> ${ARTIFACTS_DIR}/full_report.md
+            echo "- Error Message: ${{ steps.secure.outputs.phase3_error_message }}" >> ${ARTIFACTS_DIR}/full_report.md
+          fi
+          echo "" >> ${ARTIFACTS_DIR}/full_report.md
+          
+          # Generate Phase 4 (Visualize) Report Section
+          echo "## 4️⃣ Infrastructure Visualization" >> ${ARTIFACTS_DIR}/full_report.md
+          if [ "${{ steps.visualize.outputs.phase4_status }}" == "success" ]; then
+            echo "✅ **Status: Successful**" >> ${ARTIFACTS_DIR}/full_report.md
+            
+            # Extract visualization summary if available
+            if [ -f "${{ steps.visualize.outputs.phase4_output }}" ]; then
+              VISUALIZATIONS=$(jq -r '.visualizations | length // 0' "${{ steps.visualize.outputs.phase4_output }}" 2>/dev/null || echo "0")
+              
+              echo "" >> ${ARTIFACTS_DIR}/full_report.md
+              echo "### Visualization Summary" >> ${ARTIFACTS_DIR}/full_report.md
+              echo "- Visualizations Generated: ${VISUALIZATIONS}" >> ${ARTIFACTS_DIR}/full_report.md
+              echo "" >> ${ARTIFACTS_DIR}/full_report.md
+              
+              # Generate HTML report for visualizations
+              if [ -f "${{ steps.visualize.outputs.phase4_output }}" ]; then
+                python scripts/visualization/generate_report.py --input "${{ steps.visualize.outputs.phase4_output }}" --output "${ARTIFACTS_DIR}/inframate_visualization_report.html"
+                echo "A detailed HTML visualization report has been generated." >> ${ARTIFACTS_DIR}/full_report.md
+              fi
+            fi
+          else
+            echo "❌ **Status: Failed**" >> ${ARTIFACTS_DIR}/full_report.md
+            echo "- Error Type: ${{ steps.visualize.outputs.phase4_error_type }}" >> ${ARTIFACTS_DIR}/full_report.md
+            echo "- Error Message: ${{ steps.visualize.outputs.phase4_error_message }}" >> ${ARTIFACTS_DIR}/full_report.md
           fi
       
-      - name: Create issue for unresolved errors
-        if: steps.run_workflow.outputs.has_errors == 'true'
+      - name: Create issue for errors
+        if: always() && (steps.create.outputs.phase1_status == 'failure' || steps.optimize.outputs.phase2_status == 'failure' || steps.secure.outputs.phase3_status == 'failure' || steps.visualize.outputs.phase4_status == 'failure')
         uses: actions/github-script@v6
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.REPO_PAT }}
           script: |
             const fs = require('fs');
             
-            // Read the error report
-            const errorReport = fs.readFileSync('${{ env.ARTIFACTS_DIR }}/error_report.md', 'utf8');
+            // Read the full report
+            const fullReport = fs.readFileSync('${{ env.ARTIFACTS_DIR }}/full_report.md', 'utf8');
             
-            // Create an issue with the error report
+            // Determine which phases failed
+            const failedPhases = [];
+            if ('${{ steps.create.outputs.phase1_status }}' === 'failure') failedPhases.push('Infrastructure Creation');
+            if ('${{ steps.optimize.outputs.phase2_status }}' === 'failure') failedPhases.push('Optimization');
+            if ('${{ steps.secure.outputs.phase3_status }}' === 'failure') failedPhases.push('Security');
+            if ('${{ steps.visualize.outputs.phase4_status }}' === 'failure') failedPhases.push('Visualization');
+            
+            // Create an issue with the report
             const issue = await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `Inframate Error: ${{ steps.run_workflow.outputs.error_type }}`,
-              body: errorReport,
+              title: `Inframate Error: Issues in ${failedPhases.join(', ')} phases`,
+              body: fullReport,
               labels: ['error', 'inframate', 'automated']
             });
             
             console.log(`Created issue #${issue.data.number}`);
       
-      - name: Generate visualization (on success)
-        if: steps.run_workflow.outputs.has_errors != 'true' && (github.event.inputs.action == 'visualize' || github.event.inputs.action == 'auto')
-        run: |
-          python scripts/visualization/generate_report.py --input "${{ steps.run_workflow.outputs.output_file }}" --output "${ARTIFACTS_DIR}/inframate_report.html"
+      - name: Create Pull Request with Results
+        if: always() && (steps.create.outputs.phase1_status == 'success')
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.REPO_PAT }}
+          path: ${{ env.TARGET_REPO_PATH }}
+          commit-message: "Add Inframate infrastructure results"
+          title: "🔧 Inframate Infrastructure Management Results"
+          body: |
+            # Inframate Infrastructure Management Results
+            
+            This PR contains the results of the automated infrastructure management workflow, including:
+            
+            - 📊 Infrastructure Analysis and Implementation
+            - 💰 Cost and Performance Optimization
+            - 🔒 Security Enhancements
+            - 🖼️ Infrastructure Visualizations
+            
+            Please review the changes and merge if everything looks good.
+          branch: "inframate/infra-management-${{ env.RUN_TIMESTAMP }}"
+          base: ${{ github.event.inputs.target_branch || 'main' }}
       
-      - name: Upload artifacts
+      - name: Upload all artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: inframate-artifacts-${{ env.RUN_TIMESTAMP }}
+          name: inframate-all-in-one-${{ env.RUN_TIMESTAMP }}
           path: ${{ env.ARTIFACTS_DIR }}
           
       - name: Report workflow status
         run: |
-          if [ "${{ steps.run_workflow.outputs.has_errors }}" == "true" ]; then
-            echo "::error::Inframate workflow failed with error: ${{ steps.run_workflow.outputs.error_message }}"
-            echo "An issue has been created with error details and AI-powered solution."
-          else
-            echo "::notice::Inframate workflow completed successfully."
-          fi
+          echo "## Inframate All-in-One Workflow Summary"
+          echo ""
+          echo "1️⃣ Infrastructure Creation: ${{ steps.create.outputs.phase1_status || 'Not Run' }}"
+          echo "2️⃣ Infrastructure Optimization: ${{ steps.optimize.outputs.phase2_status || 'Not Run' }}"
+          echo "3️⃣ Security Analysis: ${{ steps.secure.outputs.phase3_status || 'Not Run' }}"
+          echo "4️⃣ Infrastructure Visualization: ${{ steps.visualize.outputs.phase4_status || 'Not Run' }}"
+          echo ""
           
-          # Exit with the original workflow exit code
-          exit ${{ steps.run_workflow.outputs.workflow_exit_code }} 
+          if [ "${{ steps.create.outputs.phase1_status }}" != "success" ]; then
+            echo "::error::Infrastructure Creation failed. See artifacts for details."
+            exit 1
+          fi 
