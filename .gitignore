@@ -1,4 +1,22 @@
-# Python specific
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+.terraform.lock.hcl
+
+# Terraform provider files
+**/terraform-provider-*
+
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -16,7 +34,7 @@ lib64/
 parts/
 sdist/
 var/
-.cursor/
+wheels/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -44,4 +62,8 @@ ENV/
 .Trashes
 Icon?
 ehthumbs.db
-Thumbs.db 
+Thumbs.db
+
+# Logs
+*.log
+logs/ 
