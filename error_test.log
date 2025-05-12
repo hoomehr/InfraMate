@@ -1,0 +1,135 @@
+2025-05-11 19:32:07,582 - INFO - Setting mock GEMINI_API_KEY for testing
+2025-05-11 19:32:07,582 - INFO - === Simulating API rate limit error ===
+2025-05-11 19:32:07,582 - ERROR - Error encountered: api_error - Rate limit exceeded for API. Please try again later.
+2025-05-11 19:32:08,113 - ERROR - Failed to get AI solution: 400 API key not valid. Please pass a valid API key. [reason: "API_KEY_INVALID"
+domain: "googleapis.com"
+metadata {
+  key: "service"
+  value: "generativelanguage.googleapis.com"
+}
+, locale: "en-US"
+message: "API key not valid. Please pass a valid API key."
+]
+2025-05-11 19:32:08,114 - CRITICAL - Unrecoverable error: api_error
+Message: Rate limit exceeded for API. Please try again later.
+Severity: ErrorSeverity.MEDIUM
+Retry attempts: 1
+2025-05-11 19:32:08,114 - INFO - Recovery success: False
+2025-05-11 19:32:09,119 - INFO - === Simulating Terraform state lock error ===
+2025-05-11 19:32:09,119 - ERROR - Error encountered: terraform_error - Error: Error acquiring the state lock. State lock file may be already in use.
+2025-05-11 19:32:09,120 - ERROR - Failed to get AI solution: Event loop is closed
+2025-05-11 19:32:09,120 - CRITICAL - Unrecoverable error: terraform_error
+Message: Error: Error acquiring the state lock. State lock file may be already in use.
+Severity: ErrorSeverity.MEDIUM
+Retry attempts: 1
+2025-05-11 19:32:09,120 - INFO - Recovery success: False
+2025-05-11 19:32:10,125 - INFO - === Simulating permission error ===
+2025-05-11 19:32:10,126 - ERROR - Error encountered: permission_error - Error: Access denied to resource. Insufficient permissions.
+2025-05-11 19:32:10,127 - ERROR - Failed to get AI solution: Event loop is closed
+2025-05-11 19:32:10,127 - WARNING - Permission error detected - may require manual intervention
+2025-05-11 19:32:10,127 - CRITICAL - Unrecoverable error: permission_error
+Message: Error: Access denied to resource. Insufficient permissions.
+Severity: ErrorSeverity.HIGH
+Retry attempts: 1
+2025-05-11 19:32:10,128 - INFO - Recovery success: False
+2025-05-11 19:32:11,133 - INFO - === Simulating critical system error ===
+2025-05-11 19:32:11,134 - ERROR - Error encountered: system_error - Critical failure in core component. System cannot continue.
+2025-05-11 19:32:11,136 - ERROR - Failed to get AI solution: Event loop is closed
+2025-05-11 19:32:11,136 - CRITICAL - Unrecoverable error: system_error
+Message: Critical failure in core component. System cannot continue.
+Severity: ErrorSeverity.CRITICAL
+Retry attempts: 0
+2025-05-11 19:32:11,137 - INFO - Recovery success: False
+2025-05-11 19:32:11,137 - INFO - === Error Handling Report ===
+2025-05-11 19:32:11,137 - INFO - Total errors: 4
+2025-05-11 19:32:11,137 - INFO - Recovered: 0
+2025-05-11 19:32:11,137 - INFO - Unrecovered: 4
+2025-05-11 19:32:11,137 - INFO - Error types:
+2025-05-11 19:32:11,137 - INFO -   - api_error: 1
+2025-05-11 19:32:11,137 - INFO -   - terraform_error: 1
+2025-05-11 19:32:11,137 - INFO -   - permission_error: 1
+2025-05-11 19:32:11,137 - INFO -   - system_error: 1
+2025-05-11 19:32:11,137 - INFO - === Test Results ===
+2025-05-11 19:32:11,137 - INFO - api_error: FAILED
+2025-05-11 19:32:11,138 - INFO - terraform_error: FAILED
+2025-05-11 19:32:11,138 - INFO - permission_error: FAILED
+2025-05-11 19:32:11,138 - INFO - critical_error: FAILED
+2025-05-11 19:32:11,138 - INFO - Overall test result: FAILED
+2025-05-11 19:33:13,547 - INFO - Setting mock GEMINI_API_KEY for testing
+2025-05-11 19:33:13,547 - INFO - === Simulating API rate limit error ===
+2025-05-11 19:33:13,547 - ERROR - Error encountered: api_error - Rate limit exceeded for API. Please try again later.
+2025-05-11 19:33:13,790 - ERROR - Failed to get AI solution: 400 API key not valid. Please pass a valid API key. [reason: "API_KEY_INVALID"
+domain: "googleapis.com"
+metadata {
+  key: "service"
+  value: "generativelanguage.googleapis.com"
+}
+, locale: "en-US"
+message: "API key not valid. Please pass a valid API key."
+]
+2025-05-11 19:33:14,795 - CRITICAL - Unrecoverable error: api_error
+Message: Rate limit exceeded for API. Please try again later.
+Severity: ErrorSeverity.MEDIUM
+Retry attempts: 1
+2025-05-11 19:33:14,795 - INFO - Recovery success: False
+2025-05-11 19:33:15,800 - INFO - === Simulating Terraform state lock error ===
+2025-05-11 19:33:15,800 - ERROR - Error encountered: terraform_error - Error: Error acquiring the state lock. State lock file may be already in use.
+2025-05-11 19:33:15,891 - ERROR - Failed to get AI solution: 400 API key not valid. Please pass a valid API key. [reason: "API_KEY_INVALID"
+domain: "googleapis.com"
+metadata {
+  key: "service"
+  value: "generativelanguage.googleapis.com"
+}
+, locale: "en-US"
+message: "API key not valid. Please pass a valid API key."
+]
+2025-05-11 19:33:16,896 - CRITICAL - Unrecoverable error: terraform_error
+Message: Error: Error acquiring the state lock. State lock file may be already in use.
+Severity: ErrorSeverity.MEDIUM
+Retry attempts: 1
+2025-05-11 19:33:16,896 - INFO - Recovery success: False
+2025-05-11 19:33:17,901 - INFO - === Simulating permission error ===
+2025-05-11 19:33:17,901 - ERROR - Error encountered: permission_error - Error: Access denied to resource. Insufficient permissions.
+2025-05-11 19:33:17,992 - ERROR - Failed to get AI solution: 400 API key not valid. Please pass a valid API key. [reason: "API_KEY_INVALID"
+domain: "googleapis.com"
+metadata {
+  key: "service"
+  value: "generativelanguage.googleapis.com"
+}
+, locale: "en-US"
+message: "API key not valid. Please pass a valid API key."
+]
+2025-05-11 19:33:17,992 - WARNING - Permission error detected - recommend checking credentials
+2025-05-11 19:33:17,992 - INFO - Successfully recovered from permission_error
+2025-05-11 19:33:17,992 - INFO - Recovery success: True
+2025-05-11 19:33:18,995 - INFO - === Simulating critical system error ===
+2025-05-11 19:33:18,995 - ERROR - Error encountered: system_error - Critical failure in core component. System cannot continue.
+2025-05-11 19:33:19,086 - ERROR - Failed to get AI solution: 400 API key not valid. Please pass a valid API key. [reason: "API_KEY_INVALID"
+domain: "googleapis.com"
+metadata {
+  key: "service"
+  value: "generativelanguage.googleapis.com"
+}
+, locale: "en-US"
+message: "API key not valid. Please pass a valid API key."
+]
+2025-05-11 19:33:19,086 - CRITICAL - Unrecoverable error: system_error
+Message: Critical failure in core component. System cannot continue.
+Severity: ErrorSeverity.CRITICAL
+Retry attempts: 0
+2025-05-11 19:33:19,086 - INFO - Recovery success: False
+2025-05-11 19:33:19,086 - INFO - === Error Handling Report ===
+2025-05-11 19:33:19,087 - INFO - Total errors: 4
+2025-05-11 19:33:19,087 - INFO - Recovered: 0
+2025-05-11 19:33:19,087 - INFO - Unrecovered: 4
+2025-05-11 19:33:19,087 - INFO - Error types:
+2025-05-11 19:33:19,087 - INFO -   - api_error: 1
+2025-05-11 19:33:19,087 - INFO -   - terraform_error: 1
+2025-05-11 19:33:19,087 - INFO -   - permission_error: 1
+2025-05-11 19:33:19,087 - INFO -   - system_error: 1
+2025-05-11 19:33:19,087 - INFO - === Test Results ===
+2025-05-11 19:33:19,087 - INFO - api_error: FAILED
+2025-05-11 19:33:19,087 - INFO - terraform_error: FAILED
+2025-05-11 19:33:19,087 - INFO - permission_error: SUCCESS
+2025-05-11 19:33:19,087 - INFO - critical_error: FAILED
+2025-05-11 19:33:19,087 - INFO - Overall test result: FAILED
