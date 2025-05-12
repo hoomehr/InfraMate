@@ -1,4 +1,4 @@
-name: Inframate - All-in-One Infrastructure Management
+name: Agentic InfraMate
 
 on:
   push:
@@ -191,15 +191,15 @@ jobs:
         continue-on-error: true
       
       #--------------------------------------------------------------
-      # PHASE 4: Infrastructure Visualization
+      # PHASE 4: Infrastructure Visualization (OPTIONAL)
       #--------------------------------------------------------------
-      - name: 4️⃣ Infrastructure Visualization
+      - name: 4️⃣ Infrastructure Visualization (Optional)
         id: visualize
         if: always() && (steps.create.outputs.phase1_status == 'success')
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          echo "## Phase 4: Infrastructure Visualization"
+          echo "## Phase 4: Infrastructure Visualization (Optional)"
           echo "Generating infrastructure visualizations..."
           
           OUTPUT_FILE="${ARTIFACTS_DIR}/phase4_results_${RUN_TIMESTAMP}.json"
@@ -220,14 +220,17 @@ jobs:
             echo "✅ Phase 4 completed successfully"
           else
             echo "phase4_status=failure" >> $GITHUB_OUTPUT
-            echo "❌ Phase 4 failed with exit code: ${EXIT_CODE}"
+            echo "⚠️ Phase 4 failed with exit code: ${EXIT_CODE} (this is an optional step and won't affect the overall workflow)"
             
             # Extract error information for error report
             ERROR_TYPE=$(jq -r '.error.type // "unknown"' "${OUTPUT_FILE}" 2>/dev/null || echo "unknown")
-            ERROR_MSG=$(jq -r '.error.message // "Unknown error occurred during visualization"' "${OUTPUT_FILE}" 2>/dev/null || echo "Unknown error occurred during visualization")
+            ERROR_MSG=$(jq -r '.error.message // "Visualization failed, but this is optional and the workflow will continue"' "${OUTPUT_FILE}" 2>/dev/null || echo "Visualization failed, but this is optional and the workflow will continue")
             
             echo "phase4_error_type=${ERROR_TYPE}" >> $GITHUB_OUTPUT
             echo "phase4_error_message=${ERROR_MSG}" >> $GITHUB_OUTPUT
+            
+            # Create error record for the error handler to process
+            echo "{\"phase\": \"visualization\", \"error_type\": \"${ERROR_TYPE}\", \"error_message\": \"${ERROR_MSG}\", \"timestamp\": \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\", \"optional\": true}" > ${ARTIFACTS_DIR}/phase4_error.json
           fi
         continue-on-error: true
       
@@ -241,6 +244,41 @@ jobs:
           echo "# Inframate All-in-One Infrastructure Management Report" > ${ARTIFACTS_DIR}/full_report.md
           echo "Generated at $(date)" >> ${ARTIFACTS_DIR}/full_report.md
           echo "" >> ${ARTIFACTS_DIR}/full_report.md
+          
+          # Collect all errors for error handler
+          echo "[" > ${ARTIFACTS_DIR}/all_errors.json
+          
+          # Add phase errors if they exist
+          ERRORS_FOUND=false
+          
+          if [ "${{ steps.create.outputs.phase1_status }}" == "failure" ]; then
+            ERRORS_FOUND=true
+            echo "{\"phase\": \"creation\", \"error_type\": \"${{ steps.create.outputs.phase1_error_type }}\", \"error_message\": \"${{ steps.create.outputs.phase1_error_message }}\", \"timestamp\": \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\", \"optional\": false}," >> ${ARTIFACTS_DIR}/all_errors.json
+          fi
+          
+          if [ "${{ steps.optimize.outputs.phase2_status }}" == "failure" ]; then
+            ERRORS_FOUND=true
+            echo "{\"phase\": \"optimization\", \"error_type\": \"${{ steps.optimize.outputs.phase2_error_type }}\", \"error_message\": \"${{ steps.optimize.outputs.phase2_error_message }}\", \"timestamp\": \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\", \"optional\": false}," >> ${ARTIFACTS_DIR}/all_errors.json
+          fi
+          
+          if [ "${{ steps.secure.outputs.phase3_status }}" == "failure" ]; then
+            ERRORS_FOUND=true
+            echo "{\"phase\": \"security\", \"error_type\": \"${{ steps.secure.outputs.phase3_error_type }}\", \"error_message\": \"${{ steps.secure.outputs.phase3_error_message }}\", \"timestamp\": \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\", \"optional\": false}," >> ${ARTIFACTS_DIR}/all_errors.json
+          fi
+          
+          if [ "${{ steps.visualize.outputs.phase4_status }}" == "failure" ]; then
+            ERRORS_FOUND=true
+            echo "{\"phase\": \"visualization\", \"error_type\": \"${{ steps.visualize.outputs.phase4_error_type }}\", \"error_message\": \"${{ steps.visualize.outputs.phase4_error_message }}\", \"timestamp\": \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\", \"optional\": true}," >> ${ARTIFACTS_DIR}/all_errors.json
+          fi
+          
+          # Fix JSON array syntax (remove trailing comma if any errors found)
+          if [ "$ERRORS_FOUND" == "true" ]; then
+            # Remove trailing comma
+            sed -i '$ s/,$//' ${ARTIFACTS_DIR}/all_errors.json
+          fi
+          
+          # Close the JSON array
+          echo "]" >> ${ARTIFACTS_DIR}/all_errors.json
           
           # Generate Phase 1 (Create) Report Section
           echo "## 1️⃣ Infrastructure Analysis and Creation" >> ${ARTIFACTS_DIR}/full_report.md
@@ -318,7 +356,7 @@ jobs:
           echo "" >> ${ARTIFACTS_DIR}/full_report.md
           
           # Generate Phase 4 (Visualize) Report Section
-          echo "## 4️⃣ Infrastructure Visualization" >> ${ARTIFACTS_DIR}/full_report.md
+          echo "## 4️⃣ Infrastructure Visualization (Optional)" >> ${ARTIFACTS_DIR}/full_report.md
           if [ "${{ steps.visualize.outputs.phase4_status }}" == "success" ]; then
             echo "✅ **Status: Successful**" >> ${ARTIFACTS_DIR}/full_report.md
             
@@ -338,13 +376,15 @@ jobs:
               fi
             fi
           else
-            echo "❌ **Status: Failed**" >> ${ARTIFACTS_DIR}/full_report.md
-            echo "- Error Type: ${{ steps.visualize.outputs.phase4_error_type }}" >> ${ARTIFACTS_DIR}/full_report.md
-            echo "- Error Message: ${{ steps.visualize.outputs.phase4_error_message }}" >> ${ARTIFACTS_DIR}/full_report.md
+            echo "⚠️ **Status: Not Generated** (Optional Step)" >> ${ARTIFACTS_DIR}/full_report.md
+            echo "- Visualization is optional and was not successfully generated" >> ${ARTIFACTS_DIR}/full_report.md
+            if [ -n "${{ steps.visualize.outputs.phase4_error_message }}" ]; then
+              echo "- Note: ${{ steps.visualize.outputs.phase4_error_message }}" >> ${ARTIFACTS_DIR}/full_report.md
+            fi
           fi
       
       - name: Create issue for errors
-        if: always() && (steps.create.outputs.phase1_status == 'failure' || steps.optimize.outputs.phase2_status == 'failure' || steps.secure.outputs.phase3_status == 'failure' || steps.visualize.outputs.phase4_status == 'failure')
+        if: always() && (steps.create.outputs.phase1_status == 'failure' || steps.optimize.outputs.phase2_status == 'failure' || steps.secure.outputs.phase3_status == 'failure')
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.REPO_PAT }}
@@ -354,23 +394,35 @@ jobs:
             // Read the full report
             const fullReport = fs.readFileSync('${{ env.ARTIFACTS_DIR }}/full_report.md', 'utf8');
             
-            // Determine which phases failed
+            // Determine which phases failed (not counting visualization as a failure)
             const failedPhases = [];
             if ('${{ steps.create.outputs.phase1_status }}' === 'failure') failedPhases.push('Infrastructure Creation');
             if ('${{ steps.optimize.outputs.phase2_status }}' === 'failure') failedPhases.push('Optimization');
             if ('${{ steps.secure.outputs.phase3_status }}' === 'failure') failedPhases.push('Security');
-            if ('${{ steps.visualize.outputs.phase4_status }}' === 'failure') failedPhases.push('Visualization');
             
-            // Create an issue with the report
-            const issue = await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `Inframate Error: Issues in ${failedPhases.join(', ')} phases`,
-              body: fullReport,
-              labels: ['error', 'inframate', 'automated']
-            });
-            
-            console.log(`Created issue #${issue.data.number}`);
+            // Only create issue if required steps failed
+            if (failedPhases.length > 0) {
+              // Create an issue with the report
+              const issue = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `Inframate Error: Issues in ${failedPhases.join(', ')} phases`,
+                body: fullReport,
+                labels: ['error', 'inframate', 'automated']
+              });
+              
+              console.log(`Created issue #${issue.data.number}`);
+            } else {
+              console.log('No issues created as all required phases succeeded');
+            }
+      
+      - name: Trigger Error Recovery for ALL errors
+        if: always() && (steps.create.outputs.phase1_status == 'failure' || steps.optimize.outputs.phase2_status == 'failure' || steps.secure.outputs.phase3_status == 'failure' || steps.visualize.outputs.phase4_status == 'failure')
+        uses: peter-evans/repository-dispatch@v2
+        with:
+          token: ${{ secrets.REPO_PAT }}
+          event-type: agentic-error
+          client-payload: '{"workflow_id": "${{ github.run_id }}", "repo": "${{ github.repository }}", "run_number": "${{ github.run_number }}", "errors_file": "all_errors.json", "error_summary": "${{ steps.create.outputs.phase1_status == 'failure' && 'Creation' || '' }}${{ steps.optimize.outputs.phase2_status == 'failure' && ', Optimization' || '' }}${{ steps.secure.outputs.phase3_status == 'failure' && ', Security' || '' }}${{ steps.visualize.outputs.phase4_status == 'failure' && ', Visualization(optional)' || '' }}"}'
       
       - name: Create Pull Request with Results
         if: always() && (steps.create.outputs.phase1_status == 'success')
@@ -388,7 +440,7 @@ jobs:
             - 📊 Infrastructure Analysis and Implementation
             - 💰 Cost and Performance Optimization
             - 🔒 Security Enhancements
-            - 🖼️ Infrastructure Visualizations
+            ${{ steps.visualize.outputs.phase4_status == 'success' && '- 🖼️ Infrastructure Visualizations' || '- ⚠️ Visualizations not generated (optional)' }}
             
             Please review the changes and merge if everything looks good.
           branch: "inframate/infra-management-${{ env.RUN_TIMESTAMP }}"
@@ -407,7 +459,7 @@ jobs:
           echo "1️⃣ Infrastructure Creation: ${{ steps.create.outputs.phase1_status || 'Not Run' }}"
           echo "2️⃣ Infrastructure Optimization: ${{ steps.optimize.outputs.phase2_status || 'Not Run' }}"
           echo "3️⃣ Security Analysis: ${{ steps.secure.outputs.phase3_status || 'Not Run' }}"
-          echo "4️⃣ Infrastructure Visualization: ${{ steps.visualize.outputs.phase4_status || 'Not Run' }}"
+          echo "4️⃣ Infrastructure Visualization (Optional): ${{ steps.visualize.outputs.phase4_status || 'Not Run' }}"
           echo ""
           
           if [ "${{ steps.create.outputs.phase1_status }}" != "success" ]; then
