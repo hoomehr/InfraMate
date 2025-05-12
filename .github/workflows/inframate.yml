@@ -124,6 +124,8 @@ jobs:
           fi
 
       - name: Run Inframate
+        id: run_inframate
+        continue-on-error: true
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
@@ -134,6 +136,8 @@ jobs:
           
       - name: Extract Infrastructure Structure and Costs
         id: extract_infra
+        continue-on-error: true
+        if: steps.run_inframate.outcome == 'success'
         run: |
           cd target_repo
           
@@ -221,10 +225,14 @@ jobs:
 
       - name: Set Outputs
         id: set_outputs
+        continue-on-error: true
+        if: steps.run_inframate.outcome == 'success'
         run: |
           echo "terraform_dir=terraform" >> $GITHUB_OUTPUT
 
       - name: Configure Git
+        continue-on-error: true
+        if: steps.run_inframate.outcome == 'success'
         run: |
           cd target_repo
           git config --local user.name "Inframate Bot"
@@ -232,6 +240,8 @@ jobs:
 
       - name: Create Pull Request
         id: create_pr
+        continue-on-error: true
+        if: steps.run_inframate.outcome == 'success'
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.REPO_PAT }}
