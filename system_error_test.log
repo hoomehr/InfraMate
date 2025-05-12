@@ -1,0 +1,78 @@
+2025-05-11 19:52:33,471 - WARNING - No GEMINI_API_KEY found. Some tests will use mock solutions.
+2025-05-11 19:52:33,471 - WARNING - Gemini API not available. AI-powered error handling disabled.
+2025-05-11 19:52:33,471 - INFO - === Testing injected system error handling ===
+2025-05-11 19:52:33,471 - ERROR - Error encountered: system_error - TEST ERROR: Injected system_error for testing
+2025-05-11 19:52:33,471 - INFO - Detected test/injected error - this is likely intentional
+2025-05-11 19:52:33,471 - INFO - Successfully recovered from system_error
+2025-05-11 19:52:33,471 - INFO - System error recovery success: True
+2025-05-11 19:52:33,471 - INFO - === Testing unknown error handling ===
+2025-05-11 19:52:33,471 - WARNING - Unknown error type unknown_error_xyz, using system_error instead
+2025-05-11 19:52:33,471 - ERROR - Error encountered: system_error - Some unknown error that should be handled as a system error
+2025-05-11 19:52:33,471 - INFO - Retrying after system error
+2025-05-11 19:52:33,471 - INFO - Successfully recovered from system_error
+2025-05-11 19:52:33,471 - INFO - Unknown error recovery success: True
+2025-05-11 19:52:33,471 - INFO - === Testing system error with mock solution ===
+2025-05-11 19:52:33,471 - ERROR - Error encountered: system_error - System error with a pre-provided solution in context
+2025-05-11 19:52:33,471 - INFO - Using AI-suggested solution steps for system error
+2025-05-11 19:52:33,471 - INFO - Successfully recovered from system_error
+2025-05-11 19:52:33,471 - INFO - System error with mock solution recovery success: True
+2025-05-11 19:52:33,471 - INFO - === Test Results ===
+2025-05-11 19:52:33,471 - INFO - injected_system_error: SUCCESS
+2025-05-11 19:52:33,471 - INFO - unknown_error: SUCCESS
+2025-05-11 19:52:33,471 - INFO - mock_solution: SUCCESS
+2025-05-11 19:52:33,471 - INFO - Overall test result: SUCCESS
+2025-05-11 19:52:33,471 - INFO - Total errors handled: 3
+2025-05-11 19:52:33,471 - INFO - Errors recovered: 0
+2025-05-11 19:52:33,471 - INFO - Errors unrecovered: 3
+2025-05-11 19:53:03,282 - WARNING - No GEMINI_API_KEY found. Some tests will use mock solutions.
+2025-05-11 19:53:03,282 - WARNING - Gemini API not available. AI-powered error handling disabled.
+2025-05-11 19:53:03,282 - INFO - === Testing injected system error handling ===
+2025-05-11 19:53:03,282 - ERROR - Error encountered: system_error - TEST ERROR: Injected system_error for testing
+2025-05-11 19:53:03,282 - INFO - Detected test/injected error - this is likely intentional
+2025-05-11 19:53:03,282 - INFO - Successfully recovered from system_error
+2025-05-11 19:53:03,282 - INFO - System error recovery success: True
+2025-05-11 19:53:03,282 - INFO - === Testing unknown error handling ===
+2025-05-11 19:53:03,282 - WARNING - Unknown error type unknown_error_xyz, using system_error instead
+2025-05-11 19:53:03,282 - ERROR - Error encountered: system_error - Some unknown error that should be handled as a system error
+2025-05-11 19:53:03,282 - INFO - Retrying after system error
+2025-05-11 19:53:03,282 - INFO - Successfully recovered from system_error
+2025-05-11 19:53:03,282 - INFO - Unknown error recovery success: True
+2025-05-11 19:53:03,282 - INFO - === Testing system error with mock solution ===
+2025-05-11 19:53:03,282 - ERROR - Error encountered: system_error - System error with a pre-provided solution in context
+2025-05-11 19:53:03,282 - INFO - Using AI-suggested solution steps for system error
+2025-05-11 19:53:03,282 - INFO - Successfully recovered from system_error
+2025-05-11 19:53:03,282 - INFO - System error with mock solution recovery success: True
+2025-05-11 19:53:03,282 - INFO - === Test Results ===
+2025-05-11 19:53:03,283 - INFO - injected_system_error: SUCCESS
+2025-05-11 19:53:03,283 - INFO - unknown_error: SUCCESS
+2025-05-11 19:53:03,283 - INFO - mock_solution: SUCCESS
+2025-05-11 19:53:03,283 - INFO - Overall test result: SUCCESS
+2025-05-11 19:53:03,283 - INFO - Total errors handled: 3
+2025-05-11 19:53:03,283 - INFO - Errors recovered: 3
+2025-05-11 19:53:03,283 - INFO - Errors unrecovered: 0
+2025-05-11 20:00:23,827 - WARNING - No GEMINI_API_KEY found. Some tests will use mock solutions.
+2025-05-11 20:00:23,827 - WARNING - Gemini API not available. AI-powered error handling disabled.
+2025-05-11 20:00:23,827 - INFO - === Testing injected system error handling ===
+2025-05-11 20:00:23,827 - ERROR - Error encountered: system_error - TEST ERROR: Injected system_error for testing
+2025-05-11 20:00:23,827 - INFO - Detected test/injected error - this is likely intentional
+2025-05-11 20:00:23,827 - INFO - Successfully recovered from system_error
+2025-05-11 20:00:23,828 - INFO - System error recovery success: True
+2025-05-11 20:00:23,828 - INFO - === Testing unknown error handling ===
+2025-05-11 20:00:23,828 - WARNING - Unknown error type unknown_error_xyz, using system_error instead
+2025-05-11 20:00:23,828 - ERROR - Error encountered: system_error - Some unknown error that should be handled as a system error
+2025-05-11 20:00:23,828 - INFO - Retrying after system error
+2025-05-11 20:00:23,828 - INFO - Successfully recovered from system_error
+2025-05-11 20:00:23,828 - INFO - Unknown error recovery success: True
+2025-05-11 20:00:23,828 - INFO - === Testing system error with mock solution ===
+2025-05-11 20:00:23,828 - ERROR - Error encountered: system_error - System error with a pre-provided solution in context
+2025-05-11 20:00:23,828 - INFO - Using AI-suggested solution steps for system error
+2025-05-11 20:00:23,828 - INFO - Successfully recovered from system_error
+2025-05-11 20:00:23,828 - INFO - System error with mock solution recovery success: True
+2025-05-11 20:00:23,828 - INFO - === Test Results ===
+2025-05-11 20:00:23,828 - INFO - injected_system_error: SUCCESS
+2025-05-11 20:00:23,828 - INFO - unknown_error: SUCCESS
+2025-05-11 20:00:23,828 - INFO - mock_solution: SUCCESS
+2025-05-11 20:00:23,828 - INFO - Overall test result: SUCCESS
+2025-05-11 20:00:23,828 - INFO - Total errors handled: 3
+2025-05-11 20:00:23,828 - INFO - Errors recovered: 3
+2025-05-11 20:00:23,828 - INFO - Errors unrecovered: 0

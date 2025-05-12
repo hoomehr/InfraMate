@@ -398,48 +398,28 @@ jobs:
           RUN_ID="${{ steps.determine_workflow.outputs.run_id }}"
           REPO_PATH="${{ steps.extract_error.outputs.repo_path }}"
           AUTONOMOUS="${{ steps.extract_error.outputs.autonomous }}"
-          CURRENT_TIMESTAMP=$(date +%s)
           
-          # Create error context file with proper quoting
-          cat > "${ARTIFACTS_DIR}/error_context.json" << EOF
-          {
-            "error_type": "${ERROR_TYPE}",
-            "error_message": "${ERROR_MESSAGE}",
-            "timestamp": ${CURRENT_TIMESTAMP},
-            "workflow": "${WORKFLOW_NAME}",
-            "workflow_id": "${RUN_ID:-$GITHUB_RUN_ID}",
-            "repo_path": "${REPO_PATH}"
-          }
-          EOF
-          
-          # Validate error type
-          VALID_ERROR_TYPES="api_error terraform_error permission_error validation_error resource_error gemini_error network_error system_error"
-          if ! echo "$VALID_ERROR_TYPES" | grep -q "${ERROR_TYPE}"; then
-            echo "Warning: Unknown error type ${ERROR_TYPE}, using system_error instead"
-            ERROR_TYPE="system_error"
-          fi
-          
-          # Run the error flow directly
           echo "Running error recovery flow..."
-          ERROR_RECOVERY_CMD="python scripts/debug_error_flow.py --action inject --error-type ${ERROR_TYPE} --repo-path ${REPO_PATH}"
           
-          $ERROR_RECOVERY_CMD 2>&1 | tee "${ARTIFACTS_DIR}/recovery_log.txt"
+          # Use the improved error recovery script
+          python scripts/error_recovery_script.py \
+            --error-type "${ERROR_TYPE}" \
+            --error-message "${ERROR_MESSAGE}" \
+            --repo-path "${REPO_PATH}" \
+            $([[ "${AUTONOMOUS}" == "true" ]] && echo "--autonomous") \
+            --workflow-name "${WORKFLOW_NAME}" \
+            --run-id "${RUN_ID}" \
+            --output-file "${ARTIFACTS_DIR}/recovery_report.json"
           
-          # Parse recovery log for results (this is a simple check)
-          if grep -q "Error handler result: success=true" "${ARTIFACTS_DIR}/recovery_log.txt"; then
-            echo "recovery_success=true" >> $GITHUB_OUTPUT
-            echo "::notice::Error recovery was successful"
+          RECOVERY_EXIT_CODE=$?
+          
+          # Set outputs for subsequent steps
+          if [ $RECOVERY_EXIT_CODE -eq 0 ]; then
+            echo "recovery_status=success" >> $GITHUB_OUTPUT
+            echo "✅ Error recovery was successful"
           else
-            echo "recovery_success=false" >> $GITHUB_OUTPUT
-            echo "::warning::Error recovery was not successful"
-          fi
-          
-          # Also run the full error workflow in autonomous mode if requested
-          if [ "${AUTONOMOUS}" == "--autonomous" ]; then
-            echo "Running full error recovery workflow in autonomous mode..."
-            WORKFLOW_CMD="./scripts/run_agentic_workflow.sh --repo-path ${REPO_PATH} --action auto --autonomous --output ${ARTIFACTS_DIR}/recovery_results.json --error-mode verbose"
-            
-            $WORKFLOW_CMD 2>&1 | tee -a "${ARTIFACTS_DIR}/recovery_log.txt"
+            echo "recovery_status=failure" >> $GITHUB_OUTPUT
+            echo "Warning: Error recovery was not successful"
           fi
       
       - name: Generate recovery report
@@ -459,7 +439,7 @@ jobs:
             echo ""
             
             echo "### Recovery Result"
-            if [ "${{ steps.recovery.outputs.recovery_success }}" == "true" ]; then
+            if [ "${{ steps.recovery.outputs.recovery_status }}" == "success" ]; then
               echo "✅ **Recovery successful**"
             else
               echo "❌ **Recovery failed**"
@@ -497,7 +477,7 @@ jobs:
           fi
       
       - name: Create issue with recovery report
-        if: ${{ steps.recovery.outputs.recovery_success != 'true' }}
+        if: ${{ steps.recovery.outputs.recovery_status != 'success' }}
         uses: actions/github-script@v6
         continue-on-error: true
         with:
@@ -543,7 +523,7 @@ jobs:
             }
       
       - name: Retry failed workflow if recovery was successful
-        if: ${{ steps.recovery.outputs.recovery_success == 'true' && steps.determine_workflow.outputs.run_id != 'manual' && steps.determine_workflow.outputs.run_id != '' }}
+        if: ${{ steps.recovery.outputs.recovery_status == 'success' && steps.determine_workflow.outputs.run_id != 'manual' && steps.determine_workflow.outputs.run_id != '' }}
         uses: actions/github-script@v6
         continue-on-error: true
         with:
@@ -628,7 +608,7 @@ jobs:
       - name: Report workflow completion
         if: always()
         run: |
-          if [ "${{ steps.recovery.outputs.recovery_success }}" == "true" ]; then
+          if [ "${{ steps.recovery.outputs.recovery_status }}" == "success" ]; then
             echo "::notice::Error recovery completed successfully"
             echo "Check the artifacts for recovery details"
           else
