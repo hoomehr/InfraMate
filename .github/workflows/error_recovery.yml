@@ -12,12 +12,19 @@ on:
   workflow_dispatch:
     inputs:
       workflow_id:
-        description: 'Workflow ID to analyze (optional)'
+        description: 'ID of the failed workflow'
         required: false
       error_type:
-        description: 'Type of error (optional)'
+        description: 'Type of error to handle'
         required: false
         default: 'auto_detect'
+        type: choice
+        options:
+          - auto_detect
+          - terraform_error
+          - visualization_error
+          - infrastructure_error
+          - general_error
       error_message:
         description: 'Error message (optional)'
         required: false
@@ -40,12 +47,12 @@ on:
   
   # Automatically trigger when other workflows fail
   workflow_run:
-    workflows: ['*']  # Listen to all workflows
-    types: [failure]
-    branches: ['**']  # All branches
+    types: [completed]
+    workflows: ["Create Infrastructure", "Infra Visualization", "Agentic Infrastructure Management"]
 
 jobs:
   error-recovery:
+    name: Error Recovery
     runs-on: ubuntu-latest
     # Only run when the triggering workflow has failed or when manually triggered or on schedule
     if: |
@@ -54,7 +61,7 @@ jobs:
       github.event_name == 'schedule'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
       
@@ -62,12 +69,12 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+          cache: 'pip'
       
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install google-generativeai
+          pip install requests python-dotenv google-generativeai tabulate
       
       - name: Set up artifact directory
         id: setup
@@ -76,54 +83,35 @@ jobs:
           echo "ARTIFACTS_DIR=$(pwd)/recovery_artifacts" >> $GITHUB_ENV
           echo "RUN_TIMESTAMP=$(date +%Y%m%d_%H%M%S)" >> $GITHUB_ENV
       
-      - name: Find failed workflow runs
+      - name: Find failed workflows
         id: find_failed
-        if: github.event_name == 'schedule'
-        uses: actions/github-script@v6
-        with:
-          script: |
-            // Get the latest workflow runs
-            const workflowRuns = await github.rest.actions.listWorkflowRunsForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              status: 'failure',
-              per_page: 5  // Get the most recent 5 failed runs
-            });
+        run: |
+          # For manual dispatch or workflow_run events, use the provided workflow ID
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ github.event.inputs.workflow_id }}" ]; then
+            echo "workflow_id=${{ github.event.inputs.workflow_id }}" >> $GITHUB_OUTPUT
+            echo "has_failed=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # For workflow_run events, use the triggering workflow
+          if [ "${{ github.event_name }}" == "workflow_run" ]; then
+            echo "workflow_id=${{ github.event.workflow_run.id }}" >> $GITHUB_OUTPUT
+            echo "has_failed=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # For scheduled runs, look for recent failed workflows
+          if [ "${{ github.event_name }}" == "schedule" ]; then
+            # Get failed workflows from the last 6 hours
+            FAILED_WORKFLOWS=$(gh api repos/${{ github.repository }}/actions/runs --jq '.workflow_runs[] | select(.conclusion=="failure" and .created_at > (now - 21600)) | .id')
             
-            if (workflowRuns.data.total_count === 0) {
-              console.log('No failed workflow runs found');
-              return {
-                workflowId: null,
-                runId: null,
-                workflowName: null,
-                has_failed: 'false'
-              };
-            }
-            
-            // Filter out our own error recovery workflow to avoid circular processing
-            const relevantRuns = workflowRuns.data.workflow_runs.filter(
-              run => !run.name.toLowerCase().includes('error recovery')
-            );
-            
-            if (relevantRuns.length === 0) {
-              console.log('No relevant failed workflow runs found');
-              return {
-                workflowId: null,
-                runId: null,
-                workflowName: null,
-                has_failed: 'false'
-              };
-            }
-            
-            const latestRun = relevantRuns[0];
-            console.log(`Found failed workflow: ${latestRun.name}, run ID: ${latestRun.id}`);
-            
-            return {
-              workflowId: latestRun.workflow_id,
-              runId: latestRun.id,
-              workflowName: latestRun.name,
-              has_failed: 'true'
-            };
+            if [ -n "$FAILED_WORKFLOWS" ]; then
+              echo "workflow_id=$(echo "$FAILED_WORKFLOWS" | head -n1)" >> $GITHUB_OUTPUT
+              echo "has_failed=true" >> $GITHUB_OUTPUT
+            else
+              echo "has_failed=false" >> $GITHUB_OUTPUT
+            fi
+          fi
       
       - name: Skip if no failed workflows found
         if: github.event_name == 'schedule' && steps.find_failed.outputs.has_failed == 'false'
@@ -131,475 +119,149 @@ jobs:
           echo "No failed workflows found to analyze"
           exit 0
       
-      - name: Determine workflow run to analyze
-        id: determine_workflow
+      - name: Get workflow details
+        id: workflow_details
         run: |
-          if [ "${{ github.event_name }}" == "workflow_run" ]; then
-            # Direct workflow_run trigger
-            echo "run_id=${{ github.event.workflow_run.id }}" >> $GITHUB_OUTPUT
-            echo "workflow_name=${{ github.event.workflow_run.name }}" >> $GITHUB_OUTPUT
-            echo "Analysis source: Directly triggered by workflow_run event"
-          elif [ "${{ github.event_name }}" == "schedule" ]; then
-            # Scheduled check for failed workflows
-            if [ -n "${{ steps.find_failed.outputs.result }}" ]; then
-              # Parse the JSON safely with a fallback
-              RUN_ID="${{ fromJSON(steps.find_failed.outputs.result || '{"runId":null,"workflowName":"Unknown"}').runId }}"
-              WORKFLOW_NAME="${{ fromJSON(steps.find_failed.outputs.result || '{"runId":null,"workflowName":"Unknown"}').workflowName }}"
-              
-              if [ "$RUN_ID" != "null" ] && [ -n "$RUN_ID" ]; then
-                echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
-                echo "workflow_name=$WORKFLOW_NAME" >> $GITHUB_OUTPUT
-                echo "Analysis source: Scheduled check found failed workflow: $WORKFLOW_NAME"
-              else
-                echo "No failed workflows found to analyze"
-                exit 0
-              fi
-            else
-              echo "No failed workflows found to analyze"
-              exit 0
-            fi
-          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            # Direct workflow ID provided - this is the simplified mode
-            echo "run_id=${{ github.event.inputs.workflow_id }}" >> $GITHUB_OUTPUT
-            echo "workflow_name=Specified Workflow ID: ${{ github.event.inputs.workflow_id }}" >> $GITHUB_OUTPUT
-            echo "Analysis source: Manually specified workflow ID: ${{ github.event.inputs.workflow_id }}"
-          else
-            # Fallback - just use the inputs directly
-            echo "run_id=manual" >> $GITHUB_OUTPUT
-            echo "workflow_name=Manual Trigger" >> $GITHUB_OUTPUT
-            echo "Analysis source: Manual trigger with no specific workflow"
-          fi
-      
-      - name: Download workflow artifacts
-        if: ${{ steps.determine_workflow.outputs.run_id != 'manual' && steps.determine_workflow.outputs.run_id != '' }}
-        uses: actions/github-script@v6
-        with:
-          script: |
-            const runId = '${{ steps.determine_workflow.outputs.run_id }}';
-            console.log(`Downloading artifacts for run ID: ${runId}`);
-            
-            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: runId
-            });
-            
-            // Download all artifacts, prioritizing ones that might contain error info
-            const allArtifacts = artifacts.data.artifacts;
-            console.log(`Found ${allArtifacts.length} artifacts`);
-            
-            // Sort artifacts to prioritize likely error artifacts first
-            const sortedArtifacts = allArtifacts.sort((a, b) => {
-              const aName = a.name.toLowerCase();
-              const bName = b.name.toLowerCase();
-              
-              const aScore = (aName.includes('error') ? 3 : 0) + 
-                            (aName.includes('result') ? 2 : 0) + 
-                            (aName.includes('inframate') ? 1 : 0);
-              
-              const bScore = (bName.includes('error') ? 3 : 0) + 
-                            (bName.includes('result') ? 2 : 0) + 
-                            (bName.includes('inframate') ? 1 : 0);
-              
-              return bScore - aScore;  // Higher score first
-            });
-            
-            // Download up to 3 highest-priority artifacts
-            const artifactsToDownload = sortedArtifacts.slice(0, 3);
-            
-            if (artifactsToDownload.length === 0) {
-              console.log('No artifacts found');
-            } else {
-              for (const artifact of artifactsToDownload) {
-                console.log(`Downloading artifact: ${artifact.name}`);
-                
-                try {
-                  const download = await github.rest.actions.downloadArtifact({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    artifact_id: artifact.id,
-                    archive_format: 'zip'
-                  });
-                  
-                  const fs = require('fs');
-                  fs.writeFileSync(`${process.env.ARTIFACTS_DIR}/${artifact.name}.zip`, Buffer.from(download.data));
-                  
-                  // Extract the artifact
-                  const { execSync } = require('child_process');
-                  execSync(`unzip -o ${process.env.ARTIFACTS_DIR}/${artifact.name}.zip -d ${process.env.ARTIFACTS_DIR}/${artifact.name}`);
-                  
-                  console.log(`Extracted artifact: ${artifact.name}`);
-                } catch (error) {
-                  console.log(`Error downloading artifact ${artifact.name}: ${error.message}`);
-                }
-              }
-            }
-      
-      - name: Download specific artifact (if workflow_dispatch with artifact_name)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.artifact_name != '' }}
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ inputs.artifact_name }}
-          path: ${{ env.ARTIFACTS_DIR }}/manual_artifact
-      
-      - name: Setup GitHub CLI
-        if: ${{ steps.determine_workflow.outputs.run_id != 'manual' && steps.determine_workflow.outputs.run_id != '' }}
-        run: |
-          mkdir -p ${ARTIFACTS_DIR}/logs
-          echo "Setting up GitHub CLI authentication..."
-          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
-
-      - name: Extract error information
-        id: extract_error
-        run: |
-          # Default values or provided inputs
-          REPO_PATH="${{ github.event.inputs.repo_path || '.' }}"
-          AUTONOMOUS="${{ github.event.inputs.autonomous_mode == 'true' && '--autonomous' || '' }}"
-          WORKFLOW_NAME="${{ steps.determine_workflow.outputs.workflow_name || 'Unknown Workflow' }}"
+          WORKFLOW_ID=${{ steps.find_failed.outputs.workflow_id }}
+          WORKFLOW_DATA=$(gh api repos/${{ github.repository }}/actions/runs/$WORKFLOW_ID)
           
-          # Default or user-provided error type
-          if [ "${{ github.event.inputs.error_type }}" == "auto_detect" ] || [ -z "${{ github.event.inputs.error_type }}" ]; then
-            ERROR_TYPE="unknown_error"  # Default, will try to detect
-            AUTO_DETECT=true
-          else
-            ERROR_TYPE="${{ github.event.inputs.error_type }}"
-            AUTO_DETECT=false
-          fi
+          # Extract workflow name and conclusion
+          WORKFLOW_NAME=$(echo "$WORKFLOW_DATA" | jq -r '.name')
+          WORKFLOW_CONCLUSION=$(echo "$WORKFLOW_DATA" | jq -r '.conclusion')
           
-          # Default or user-provided error message
-          if [ -z "${{ github.event.inputs.error_message }}" ]; then
-            ERROR_MESSAGE="Unknown error - will attempt to detect from workflow artifacts"
-            AUTO_DETECT_MESSAGE=true
-          else
-            ERROR_MESSAGE="${{ github.event.inputs.error_message }}"
-            AUTO_DETECT_MESSAGE=false
-          fi
-          
-          # For workflow runs with ID, try to extract info from logs and artifacts
-          if [ "${{ steps.determine_workflow.outputs.run_id }}" != "manual" ] && [ "$AUTO_DETECT" == "true" ]; then
-            echo "Auto-detecting error information from workflow ID: ${{ steps.determine_workflow.outputs.run_id }}"
-            
-            # Get workflow run info (if we have GH CLI installed and authenticated)
-            mkdir -p ${ARTIFACTS_DIR}/logs
-            if command -v gh &> /dev/null; then
-              echo "Using GitHub CLI to get workflow run details..."
-              
-              # Try to get run logs, but continue if it fails
-              gh run view ${{ steps.determine_workflow.outputs.run_id }} --log > ${ARTIFACTS_DIR}/logs/workflow.log 2>${ARTIFACTS_DIR}/logs/gh_errors.log || echo "Could not retrieve workflow logs (see ${ARTIFACTS_DIR}/logs/gh_errors.log for details)"
-              
-              # Only try to get workflow info if getting the logs worked
-              if [ -s "${ARTIFACTS_DIR}/logs/workflow.log" ]; then
-                # Extract workflow name and status
-                WORKFLOW_INFO=$(gh run view ${{ steps.determine_workflow.outputs.run_id }} --json name,status 2>/dev/null || echo '{"name":"Unknown","status":"unknown"}')
-                
-                # Get a better workflow name if available
-                DETECTED_NAME=$(echo $WORKFLOW_INFO | jq -r '.name')
-                if [ "$DETECTED_NAME" != "null" ] && [ "$DETECTED_NAME" != "Unknown" ]; then
-                  WORKFLOW_NAME="$DETECTED_NAME"
-                  echo "Detected workflow name: $WORKFLOW_NAME"
-                fi
-              else
-                echo "Failed to get workflow logs, will try to continue with artifacts only"
-              fi
-            else
-              echo "GitHub CLI not available, skipping workflow log retrieval"
-            fi
-            
-            # Look for error files in all extracted directories
-            ERROR_FILES=$(find $ARTIFACTS_DIR -type f -name "*.json" | grep -E "results|errors|output" || echo "")
-            
-            if [ -n "$ERROR_FILES" ]; then
-              # Use the first error file found
-              ERROR_FILE=$(echo "$ERROR_FILES" | head -n 1)
-              echo "Found error file: $ERROR_FILE"
-              
-              # Extract error type and message
-              if [ -f "$ERROR_FILE" ]; then
-                # Try multiple JSON paths where error info might be stored
-                EXTRACTED_TYPE=$(jq -r '.error.type // .error_type // .type // "unknown_error"' "$ERROR_FILE" 2>/dev/null || echo "unknown_error")
-                EXTRACTED_MSG=$(jq -r '.error.message // .error_message // .message // "Unknown error"' "$ERROR_FILE" 2>/dev/null || echo "Unknown error")
-                
-                if [ "$EXTRACTED_TYPE" != "null" ] && [ "$EXTRACTED_TYPE" != "" ]; then
-                  ERROR_TYPE="$EXTRACTED_TYPE"
-                  echo "Detected error type: $ERROR_TYPE"
-                fi
-                
-                if [ "$EXTRACTED_MSG" != "null" ] && [ "$EXTRACTED_MSG" != "" ] && [ "$AUTO_DETECT_MESSAGE" == "true" ]; then
-                  ERROR_MESSAGE="$EXTRACTED_MSG"
-                  echo "Detected error message: $ERROR_MESSAGE"
-                fi
-              fi
-            else
-              echo "No error files found in artifacts, trying to detect from logs"
-              
-              # Search logs for common error patterns if available
-              if [ -f "${ARTIFACTS_DIR}/logs/workflow.log" ] && [ -s "${ARTIFACTS_DIR}/logs/workflow.log" ]; then
-                echo "Analyzing workflow logs for error patterns..."
-                
-                # Check for common error patterns
-                if grep -q "terraform.*error" ${ARTIFACTS_DIR}/logs/workflow.log; then
-                  ERROR_TYPE="terraform_error"
-                  if [ "$AUTO_DETECT_MESSAGE" == "true" ]; then
-                    ERROR_MESSAGE=$(grep -m 1 "terraform.*error" ${ARTIFACTS_DIR}/logs/workflow.log | head -n 1)
-                  fi
-                  echo "Detected Terraform error"
-                elif grep -q "permission denied" ${ARTIFACTS_DIR}/logs/workflow.log; then
-                  ERROR_TYPE="permission_error"
-                  if [ "$AUTO_DETECT_MESSAGE" == "true" ]; then
-                    ERROR_MESSAGE=$(grep -m 1 "permission denied" ${ARTIFACTS_DIR}/logs/workflow.log | head -n 1)
-                  fi
-                  echo "Detected permission error"
-                elif grep -q "network.*error" ${ARTIFACTS_DIR}/logs/workflow.log; then
-                  ERROR_TYPE="network_error"
-                  if [ "$AUTO_DETECT_MESSAGE" == "true" ]; then
-                    ERROR_MESSAGE=$(grep -m 1 "network.*error" ${ARTIFACTS_DIR}/logs/workflow.log | head -n 1)
-                  fi
-                  echo "Detected network error"
-                elif grep -q "rate limit" ${ARTIFACTS_DIR}/logs/workflow.log; then
-                  ERROR_TYPE="api_error"
-                  if [ "$AUTO_DETECT_MESSAGE" == "true" ]; then
-                    ERROR_MESSAGE=$(grep -m 1 "rate limit" ${ARTIFACTS_DIR}/logs/workflow.log | head -n 1)
-                  fi
-                  echo "Detected API rate limit error"
-                fi
-              else
-                echo "No usable log file found for error detection"
-              fi
-            fi
-          fi
-          
-          echo "error_type=$ERROR_TYPE" >> $GITHUB_OUTPUT
-          echo "error_message=$ERROR_MESSAGE" >> $GITHUB_OUTPUT
-          echo "repo_path=$REPO_PATH" >> $GITHUB_OUTPUT
-          echo "autonomous=$AUTONOMOUS" >> $GITHUB_OUTPUT
           echo "workflow_name=$WORKFLOW_NAME" >> $GITHUB_OUTPUT
+          echo "workflow_conclusion=$WORKFLOW_CONCLUSION" >> $GITHUB_OUTPUT
           
-          echo "Final error details:"
-          echo "Error type: $ERROR_TYPE"
-          echo "Error message: $ERROR_MESSAGE"
-          echo "Repository path: $REPO_PATH"
-          echo "Workflow: $WORKFLOW_NAME"
+          # Get the failed job
+          FAILED_JOB=$(echo "$WORKFLOW_DATA" | jq -r '.jobs[] | select(.conclusion=="failure") | .name')
+          echo "failed_job=$FAILED_JOB" >> $GITHUB_OUTPUT
+          
+          # Get error logs
+          JOB_ID=$(echo "$WORKFLOW_DATA" | jq -r '.jobs[] | select(.conclusion=="failure") | .id')
+          if [ -n "$JOB_ID" ]; then
+            gh api repos/${{ github.repository }}/actions/jobs/$JOB_ID/logs > error_logs.txt
+          fi
       
-      - name: Run error recovery handler
+      - name: Determine error type
+        id: error_type
+        run: |
+          # Use provided error type if specified
+          if [ "${{ github.event.inputs.error_type }}" != "auto_detect" ]; then
+            echo "error_type=${{ github.event.inputs.error_type }}" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Auto-detect error type based on workflow name and logs
+          if [ "${{ steps.workflow_details.outputs.workflow_name }}" == "Infra Visualization" ]; then
+            echo "error_type=visualization_error" >> $GITHUB_OUTPUT
+          elif [ "${{ steps.workflow_details.outputs.workflow_name }}" == "Create Infrastructure" ]; then
+            if grep -q "terraform" error_logs.txt; then
+              echo "error_type=terraform_error" >> $GITHUB_OUTPUT
+            else
+              echo "error_type=infrastructure_error" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "error_type=general_error" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Run error recovery script
         id: recovery
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ERROR_TYPE: ${{ steps.error_type.outputs.error_type }}
+          WORKFLOW_ID: ${{ steps.find_failed.outputs.workflow_id }}
+          WORKFLOW_NAME: ${{ steps.workflow_details.outputs.workflow_name }}
+          FAILED_JOB: ${{ steps.workflow_details.outputs.failed_job }}
         run: |
-          # Create directory if it doesn't exist
-          mkdir -p "${ARTIFACTS_DIR}"
+          # Create error recovery directory
+          mkdir -p error_recovery
           
           # Extract error outputs to variables to avoid substitution issues
-          ERROR_TYPE="${{ steps.extract_error.outputs.error_type }}"
-          ERROR_MESSAGE="${{ steps.extract_error.outputs.error_message }}"
-          WORKFLOW_NAME="${{ steps.extract_error.outputs.workflow_name }}"
-          RUN_ID="${{ steps.determine_workflow.outputs.run_id }}"
-          REPO_PATH="${{ steps.extract_error.outputs.repo_path }}"
-          AUTONOMOUS="${{ steps.extract_error.outputs.autonomous }}"
+          ERROR_LOGS=$(cat error_logs.txt)
           
-          echo "Running error recovery flow..."
-          
-          # Use the improved error recovery script with proper variable handling
+          # Initialize AUTONOMOUS_ARG
           AUTONOMOUS_ARG=""
-          if [ "${AUTONOMOUS}" = "true" ]; then
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             AUTONOMOUS_ARG="--autonomous"
           fi
           
-          python scripts/error_recovery_script.py \
-            --error-type "${ERROR_TYPE}" \
-            --error-message "${ERROR_MESSAGE}" \
-            --repo-path "${REPO_PATH}" \
-            ${AUTONOMOUS_ARG} \
-            --workflow-name "${WORKFLOW_NAME}" \
-            --run-id "${RUN_ID}" \
-            --output-file "${ARTIFACTS_DIR}/recovery_report.json"
+          # Run the error recovery script
+          python scripts/error_recovery.py \
+            --error-type "$ERROR_TYPE" \
+            --workflow-id "$WORKFLOW_ID" \
+            --workflow-name "$WORKFLOW_NAME" \
+            --failed-job "$FAILED_JOB" \
+            --error-logs "$ERROR_LOGS" \
+            --output error_recovery/recovery_plan.json \
+            $AUTONOMOUS_ARG
           
-          RECOVERY_EXIT_CODE=$?
-          
-          # Set outputs for subsequent steps
-          if [ $RECOVERY_EXIT_CODE -eq 0 ]; then
-            echo "recovery_status=success" >> $GITHUB_OUTPUT
-            echo "✅ Error recovery was successful"
+          # Set outputs based on exit code
+          if [ $? -eq 0 ]; then
+            echo "recovery_success=true" >> $GITHUB_OUTPUT
           else
-            echo "recovery_status=failure" >> $GITHUB_OUTPUT
-            echo "Warning: Error recovery was not successful"
+            echo "recovery_success=false" >> $GITHUB_OUTPUT
           fi
       
-      - name: Generate recovery report
-        run: |
-          mkdir -p "${ARTIFACTS_DIR}"
-          
-          # Create recovery report with properly escaped values
-          {
-            echo "## Error Recovery Report"
-            echo ""
-            echo "### Error Details"
-            echo "- **Type:** ${{ steps.extract_error.outputs.error_type }}"
-            echo "- **Message:** ${{ steps.extract_error.outputs.error_message }}"
-            echo "- **Workflow:** ${{ steps.extract_error.outputs.workflow_name }}"
-            echo "- **Workflow Run ID:** ${{ steps.determine_workflow.outputs.run_id || 'manual' }}"
-            echo "- **Timestamp:** $(date)"
-            echo ""
-            
-            echo "### Recovery Result"
-            if [ "${{ steps.recovery.outputs.recovery_status }}" == "success" ]; then
-              echo "✅ **Recovery successful**"
-            else
-              echo "❌ **Recovery failed**"
-            fi
-            echo ""
-            
-            echo "### Recovery Log"
-            echo '```'
-          } > "${ARTIFACTS_DIR}/recovery_report.md"
-          
-          # Append log content separately to avoid any parsing issues
-          if [ -f "${ARTIFACTS_DIR}/recovery_log.txt" ]; then
-            tail -n 50 "${ARTIFACTS_DIR}/recovery_log.txt" >> "${ARTIFACTS_DIR}/recovery_report.md"
-          else
-            echo "No recovery log found" >> "${ARTIFACTS_DIR}/recovery_report.md"
-          fi
-          
-          echo '```' >> "${ARTIFACTS_DIR}/recovery_report.md"
-          
-          # Extract AI solution if available
-          if [ -f "${ARTIFACTS_DIR}/recovery_results.json" ]; then
-            {
-              echo ""
-              echo "### AI Solution"
-              
-              # Extract root cause
-              echo "#### Root Cause"
-              jq -r '.error.ai_solution.root_cause // "Not available"' "${ARTIFACTS_DIR}/recovery_results.json"
-              echo ""
-              
-              # Extract solution
-              echo "#### Solution"
-              jq -r '.error.ai_solution.solution // "No solution available"' "${ARTIFACTS_DIR}/recovery_results.json"
-            } >> "${ARTIFACTS_DIR}/recovery_report.md"
-          fi
-      
-      - name: Create issue with recovery report
-        if: ${{ steps.recovery.outputs.recovery_status != 'success' }}
+      - name: Create recovery issue
+        if: steps.recovery.outputs.recovery_success == 'true'
         uses: actions/github-script@v6
-        continue-on-error: true
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const artifactsDir = process.env.ARTIFACTS_DIR;
-            const reportPath = `${artifactsDir}/recovery_report.md`;
+            const recoveryPlan = JSON.parse(fs.readFileSync('error_recovery/recovery_plan.json', 'utf8'));
             
-            try {
-              const report = fs.readFileSync(reportPath, 'utf8');
-              
-              const issue = await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: `Error Recovery Failed: ${{ steps.extract_error.outputs.error_type }} in ${{ steps.extract_error.outputs.workflow_name }}`,
-                body: report,
-                labels: ['error', 'recovery-failed', 'automated']
-              });
-              
-              console.log(`Created issue #${issue.data.number}`);
-            } catch (error) {
-              console.log(`Could not create issue: ${error.message}`);
-              console.log('This might be due to permission issues with the GITHUB_TOKEN.');
-              console.log('Consider adding the following to your workflow:');
-              console.log('permissions:');
-              console.log('  actions: write');
-              console.log('  contents: read');
-              console.log('  issues: write');
-              
-              // Create a file with the error report instead
-              try {
-                const errorReportPath = `${artifactsDir}/error_report.md`;
-                const report = fs.existsSync(reportPath) ? 
-                  fs.readFileSync(reportPath, 'utf8') : 
-                  "Failed to read recovery report";
-                  
-                fs.writeFileSync(errorReportPath, report);
-                console.log(`Error report saved to artifact: ${errorReportPath}`);
-              } catch (fsError) {
-                console.log(`Failed to save error report: ${fsError.message}`);
-              }
-            }
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Error Recovery Plan: ${context.payload.workflow_run?.name || 'Unknown Workflow'}`,
+              body: `## Error Recovery Plan\n\n` +
+                    `### Error Type\n${recoveryPlan.error_type}\n\n` +
+                    `### Root Cause\n${recoveryPlan.root_cause}\n\n` +
+                    `### Solution\n${recoveryPlan.solution}\n\n` +
+                    `### Prevention\n${recoveryPlan.prevention}\n\n` +
+                    `### Additional Context\n` +
+                    `- Workflow: ${context.payload.workflow_run?.name || 'Unknown'}\n` +
+                    `- Failed Job: ${context.payload.workflow_run?.jobs?.[0]?.name || 'Unknown'}\n` +
+                    `- Error Time: ${new Date().toISOString()}\n\n` +
+                    `This issue was automatically created by the error recovery system.`,
+              labels: ['error-recovery', 'automated']
+            });
+            
+            console.log(`Created recovery issue #${issue.data.number}`);
       
-      - name: Retry failed workflow if recovery was successful
-        if: ${{ steps.recovery.outputs.recovery_status == 'success' && steps.determine_workflow.outputs.run_id != 'manual' && steps.determine_workflow.outputs.run_id != '' }}
+      - name: Comment on PR
+        if: steps.recovery.outputs.recovery_success == 'true'
         uses: actions/github-script@v6
-        continue-on-error: true
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const artifactsDir = process.env.ARTIFACTS_DIR;
-            const reportPath = `${artifactsDir}/recovery_report.md`;
-            let report = "Error recovery successful";
+            const recoveryPlan = JSON.parse(fs.readFileSync('error_recovery/recovery_plan.json', 'utf8'));
             
-            try {
-              report = fs.readFileSync(reportPath, 'utf8');
-            } catch (error) {
-              console.log(`Could not read recovery report: ${error.message}`);
-            }
+            // Find the PR associated with the workflow
+            const workflowId = '${{ steps.find_failed.outputs.workflow_id }}';
+            const workflow = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: workflowId
+            });
             
-            try {
-              // Get the workflow that failed
-              const workflowRun = await github.rest.actions.getWorkflowRun({
+            // Extract PR number from workflow
+            const prMatch = workflow.data.head_commit.message.match(/\(#(\d+)\)/);
+            if (prMatch) {
+              const prNumber = prMatch[1];
+              await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                run_id: ${{ steps.determine_workflow.outputs.run_id }}
+                issue_number: prNumber,
+                body: `## 🛠️ Error Recovery Plan\n\n` +
+                      `An error was detected and a recovery plan has been created.\n\n` +
+                      `### Error Type\n${recoveryPlan.error_type}\n\n` +
+                      `### Solution\n${recoveryPlan.solution}\n\n` +
+                      `### Prevention\n${recoveryPlan.prevention}\n\n` +
+                      `A detailed issue has been created with more information.`
               });
-              
-              // Try to create comment on the workflow run
-              try {
-                await github.rest.actions.createWorkflowDispatch({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  workflow_id: workflowRun.data.workflow_id,
-                  ref: workflowRun.data.head_branch || 'main',
-                  inputs: workflowRun.data.inputs || {}
-                });
-                
-                console.log(`Triggered re-run of workflow: ${workflowRun.data.workflow_id}`);
-              } catch (dispatchError) {
-                console.log(`Could not trigger workflow re-run: ${dispatchError.message}`);
-                console.log('This could be due to permissions or the workflow no longer existing');
-              }
-              
-              // Create a comment in the PR if this was a PR-triggered workflow
-              if (workflowRun.data.pull_requests && workflowRun.data.pull_requests.length > 0) {
-                try {
-                  const prNumber = workflowRun.data.pull_requests[0].number;
-                  
-                  await github.rest.issues.createComment({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    issue_number: prNumber,
-                    body: `## ✅ Automated Error Recovery Successful\n\nError recovery for workflow "${workflowRun.data.name}" was successful. The workflow has been re-triggered.\n\n${report}`
-                  });
-                  
-                  console.log(`Created comment on PR #${prNumber}`);
-                } catch (commentError) {
-                  console.log(`Could not create PR comment: ${commentError.message}`);
-                }
-              }
-            } catch (error) {
-              console.log(`Error retrieving workflow run ${${{ steps.determine_workflow.outputs.run_id }}}: ${error.message}`);
-              console.log('Could not retry the workflow. This might be due to the workflow run no longer existing or permission issues.');
-              
-              // Create a simple recovery success note in the repo (if we have permission)
-              try {
-                await github.rest.issues.create({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  title: `✅ Error Recovery Successful for Run ID: ${{ steps.determine_workflow.outputs.run_id }}`,
-                  body: `## Error Recovery Report\n\nError recovery was successful, but the original workflow run could not be found to trigger a re-run.\n\n${report}`,
-                  labels: ['automated', 'recovery-success']
-                });
-              } catch (issueError) {
-                console.log(`Could not create success issue: ${issueError.message}`);
-              }
             }
       
       - name: Upload recovery artifacts
@@ -611,7 +273,7 @@ jobs:
       - name: Report workflow completion
         if: always()
         run: |
-          if [ "${{ steps.recovery.outputs.recovery_status }}" == "success" ]; then
+          if [ "${{ steps.recovery.outputs.recovery_success }}" == "true" ]; then
             echo "::notice::Error recovery completed successfully"
             echo "Check the artifacts for recovery details"
           else
